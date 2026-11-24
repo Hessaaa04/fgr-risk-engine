@@ -289,7 +289,7 @@
     }
     var P = S.src.prov;
     if (P && S.src.files.length) {
-      h += '<section class="panel"><h2>Sources</h2><p class="sub small">Management accounts (actuals) are more accurate than the monthly estimates, and later estimate files revise earlier months. For each month the engine uses one file: one that reports the month’s return first, then actuals over estimates, then the newest file. Change a file’s type if its name does not say.</p>' +
+      h += '<section class="panel"><h2>Sources</h2><p class="sub small">Management accounts (actuals) are more accurate than the monthly estimates, and later estimate files revise earlier months. For each month the engine uses one file, never mixing two: actuals over estimates, then a file that reports the month’s return, then the newest file. Change a file’s type if its name does not say.</p>' +
         '<div class="scroll"><table><tr><th>File</th><th>Type</th><th class="r">Months used</th></tr>' +
         S.src.files.map(function (f, i) {
           var used = Object.keys(P.months).filter(function (m) { return P.months[m].file === f.name; });

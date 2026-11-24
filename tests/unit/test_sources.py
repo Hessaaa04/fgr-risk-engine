@@ -54,9 +54,9 @@ def test_actuals_beat_estimates_and_revisions_are_listed(out):
     assert jan["others"] == [["Dec 23 Estimates.xlsx", 0.01]]  # only the newest sheet of the estimates file is compared
 
 
-def test_a_month_with_a_return_beats_an_opening_value(out):
+def test_actuals_win_even_without_a_return_and_a_return_beats_an_opening_value(out):
+    assert out["months"]["2022-12"]["file"] == "Management Accounts Dec 23.xlsx"  # the only file with Dec 2022
     assert out["months"]["2023-12"]["file"] == "March24 Estimates.xlsx"  # only file with Dec 2023: kept as value only
-    assert out["months"]["2022-12"]["file"] == "Management Accounts Dec 23.xlsx"
 
 
 def test_newest_estimate_wins(out):

@@ -1,8 +1,8 @@
 /* Combine valuation files from different sources before the dataset is built.
    FGR has two sources for the same month: management accounts ("actuals", more accurate) and the monthly
    estimates (revised by later files). For each month exactly one file is used:
-     1. a file that reports the month's return beats one that only has its value (a file's opening month);
-     2. then an actuals file beats any estimates file;
+     1. an actuals file beats any estimates file;
+     2. then a file that reports the month's return beats one that only has its value (a file's opening month);
      3. among files of the same kind, the one that runs to the latest month wins (it carries the revisions);
      4. a remaining tie goes to the file loaded last.
    Every other file's figures for that month are set aside and listed, so revisions are visible, never silent.
@@ -63,8 +63,8 @@
       });
     });
     var rank = function (a, b) {
-      if (a.hasReturn !== b.hasReturn) return a.hasReturn ? -1 : 1;  // a file's opening month carries no return; risk needs one
       if (a.kind !== b.kind) return a.kind === 'actual' ? -1 : 1;
+      if (a.hasReturn !== b.hasReturn) return a.hasReturn ? -1 : 1;  // a file's opening month carries no return
       if (a.last !== b.last) return a.last > b.last ? -1 : 1;
       return b.order - a.order;
     };
