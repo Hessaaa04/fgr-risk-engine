@@ -28,3 +28,9 @@ python scripts/make_synthetic.py        # writes synthetic workbooks to out/
 ## Rules
 
 No real portfolio data in this repository, ever. See `CLAUDE.md` and `docs/data-rules.md`.
+
+## The test website
+
+`python scripts/build_web.py dist/ --csp` builds the site into `dist/` (code and made-up sample data only).
+Serve that folder with any static web server, for example `python -m http.server -d dist`, and open it in Chrome or Edge.
+Excel files loaded on the Data page are read inside the browser tab; nothing is uploaded or saved.

@@ -48,3 +48,22 @@ def smooth(r: np.ndarray, phi: float) -> np.ndarray:
         prev = (1 - phi) * x + phi * prev if t else x
         out[t] = prev
     return out
+
+
+def observed_frequency(r: dict[str, float]) -> str:
+    """Guess how often a holding is revalued from where its non-zero returns fall.
+
+    'monthly' unless at least 80% of non-zero returns land in quarter-end months
+    ('quarterly') or in one calendar month each year ('annual'). Needs 8+ non-zero months; else 'unknown'.
+    A label only: it decides whether monthly desmoothing is appropriate, not any number.
+    """
+    nz = [m for m, x in r.items() if x is not None and x != 0]
+    if len(nz) < 8:
+        return "unknown"
+    months = [int(m[5:7]) for m in nz]
+    top = max(months.count(k) for k in range(1, 13))
+    if top / len(nz) >= 0.8 and len(nz) <= len(r) / 6:
+        return "annual"
+    if sum(1 for k in months if k % 3 == 0) / len(nz) >= 0.8 and len(nz) <= len(r) / 2:
+        return "quarterly"
+    return "monthly"

@@ -20,3 +20,7 @@ Mirrors Section 12 of the Master Project Specification. Newest decisions at the 
 | D14 | Code in a private repository on Hessa's GitHub account | Agreed 24 Nov 2026 | Hessa's choice; revisit at team rollout |
 | D15 | riskcore is checked against the frozen v0.4.2 engine on synthetic data in every CI run | Phase 0, 24 Nov 2026 | Proves the port preserved validated behaviour |
 | D16 | The confidence label also counts weight in stale-priced holdings (>5% caps it at Medium, >25% at Low) | Phase 0, 24 Nov 2026 | Stale holdings are "reported" data yet understate risk |
+| D17 | Default risk window is a rolling 36 months (3 years); 60 and 120 remain options | Agreed 24 Nov 2026 (Hessa) | History runs 2015 to 2025; Hessa asked for a 3-year engine |
+| D18 | The test website reads the same two workbooks as v0.4.2 with the frozen v0.4.2 reader; data stays in the browser tab and is not saved | Test build, 24 Nov 2026 | No reformatting for the team; nothing to leak |
+| D19 | riskcore needs only numpy (normal quantile from Python's standard library, not scipy), and Pyodide is served from the site itself with pinned hashes | Test build, 24 Nov 2026 | Smaller, faster browser engine; no third-party scripts. Parity with v0.4.2 unchanged |
+| D20 | The test website's front end is plain JavaScript with no build step; React+TypeScript is deferred until the page set settles | Test build, 24 Nov 2026 | Faster iteration on Hessa's feedback; revisit before team rollout |
