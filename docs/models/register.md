@@ -3,6 +3,7 @@
 Status of each calculation in `riskcore/`. "Parity" = reproduces the frozen v0.4.2 engine on
 synthetic data in CI (`tests/parity/`). Independent validation by the model-validator agent is
 still required before any figure appears in an approved report.
+First independent validation: `validation/riskcore-0.1.0.md` (Pass with conditions, 24 Nov 2026).
 
 | Model | Module | Source | Parity tolerance | Validation | Main limitation |
 | --- | --- | --- | --- | --- | --- |
