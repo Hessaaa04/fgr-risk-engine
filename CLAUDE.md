@@ -14,7 +14,7 @@ decisions are mirrored in `docs/decision-log.md`.
 3. **Do not present unreliable estimates as precise.** Risk figures carry a confidence label;
    headline measures carry a range (`riskcore/uncertainty.py`).
 4. **The model builder never validates its own model.** Changes to `riskcore/` need the
-   model-validator agent's review and Hessa's approval before merge.
+   Model Validator's review and Hessa's approval before merge.
 5. **Preserve working behaviour.** `tests/parity/` proves riskcore reproduces v0.4.2. A change
    that breaks parity must be intended, explained in the PR and logged in the decision log.
 
@@ -25,7 +25,10 @@ decisions are mirrored in `docs/decision-log.md`.
 - `legacy/v0_4_2/engine.js` the frozen v0.4.2 engine, used only as the parity oracle.
 - `tests/` unit, property, parity and repository-hygiene tests.
 - `docs/` architecture, decision log, model register, data rules, backlog.
-- `.claude/agents/` the development team's subagent definitions.
+- `.claude/agents/` the development team:
+  Quant Researcher (`quant-researcher`), Model Validator (`model-validator`),
+  Software Engineer (`software-engineer`), Data Engineer (`data-engineer`),
+  Security Reviewer (`security-reviewer`), QA Engineer (`qa-engineer`).
 
 ## Working conventions
 
