@@ -1,0 +1,23 @@
+[project]
+name = "fgr-risk-engine"
+version = "0.1.0"
+description = "Portfolio risk and analytics engine: validated Python calculations (riskcore) and synthetic test data."
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0", "scipy>=1.13", "pandas>=2.2", "openpyxl>=3.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6"]
+
+[tool.setuptools]
+packages = ["riskcore", "synthetic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 170
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E741", "B905", "E731"]
