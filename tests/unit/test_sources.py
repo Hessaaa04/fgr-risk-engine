@@ -1,3 +1,4 @@
+# ruff: noqa: E501  (the embedded JavaScript test fixture has long lines)
 """web/sources.js: one file per month, actuals over estimates, newest estimate wins, revisions and gaps listed."""
 
 from __future__ import annotations
