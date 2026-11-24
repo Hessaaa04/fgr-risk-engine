@@ -430,7 +430,7 @@ def liquidity(files_json: str, settings_json: str) -> str:
             issues.append({"level": "error", "text": f"Could not read {f.get('name', '')} as a liquidity report: {e}."})
             continue
         issues += iss
-        a = lp.analyse(pr, float(s.get("min_liquid") or 0.75), int(s.get("horizon") or lp.LIQUID_MAX_DAYS), terms,
+        a = lp.analyse(pr, float(s.get("min_liquid") or 0.90), int(s.get("horizon") or lp.LIQUID_MAX_DAYS), terms,
                        float(s.get("suspend") or 0.0))
         a["file"] = f.get("name", "")
         out.append(a)

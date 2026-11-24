@@ -9,7 +9,7 @@
   var PAGES = [['overview', 'Overview'], ['data', 'Data'], ['risk', 'Risk'], ['benchmarks', 'Benchmarks'], ['stress', 'Stress & scenarios'],
     ['attribution', 'Attribution'], ['liquidity', 'Liquidity'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
   var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {},
-    liqr: { min_liquid: 0.75, horizon: 60, receivables: false, suspend: 0, terms: {} } };
+    liqr: { min_liquid: 0.9, horizon: 60, receivables: false, suspend: 0, terms: {} } };
   var S = {
     settings: JSON.parse(JSON.stringify(DEF)), source: null, loadMsgs: [], issues: [], meta: null, R: null, busy: false,
     cmp: { names: null, period: '36', from: null, to: null }, cmpRes: null,

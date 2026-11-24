@@ -126,6 +126,8 @@ def available(r: dict, d: int, terms: Terms | None, as_of: str | None, suspend: 
     """Value that can be in cash within d days: contractual terms, entered gates/lock-ups/fees, and an optional
     suspension of a share of quarterly-or-longer funds (stressed view)."""
     v, md = r["value"], r["max_days"]
+    if md is None and r["bucket"] == "cash":  # L-1: cash principal is available from day 1 even when the days cell is blank
+        md = 1
     if v is None or md is None or r["bucket"] in ("maturity", "permanent", "unknown") or d < md:
         return 0.0
     frac = 1.0
@@ -143,7 +145,7 @@ def available(r: dict, d: int, terms: Terms | None, as_of: str | None, suspend: 
     return v * frac
 
 
-def analyse(pr: Profile, min_liquid: float = 0.75, horizon: int = LIQUID_MAX_DAYS, terms: dict[str, Terms] | None = None,
+def analyse(pr: Profile, min_liquid: float = 0.90, horizon: int = LIQUID_MAX_DAYS, terms: dict[str, Terms] | None = None,
             suspend_quarterly: float = 0.0) -> dict:
     """Buckets, days-to-cash ladder (contractual and stressed), limit check and data checks for one month's report.
 
@@ -164,6 +166,10 @@ def analyse(pr: Profile, min_liquid: float = 0.75, horizon: int = LIQUID_MAX_DAY
         })
         if p.value is None:
             checks.append({"level": "error", "name": p.name, "text": "has no valuation, so it is left out of every total (not counted as zero)."})
+        if p.max_days is None and not p.no_redemption and b in ("cash", "extended"):  # L-2
+            checks.append({"level": "warn", "name": p.name, "text": (
+                "has no maximum days to cash; cash is counted as available from day 1." if b == "cash" else
+                "has no maximum days to cash, so it is not counted as available at any horizon. Add the days to the report.")})
         if b == "unknown":
             checks.append({"level": "error", "name": p.name, "text": "has no maximum days to cash and no timeline that places it, so it is not in any bucket."})
         if p.label in ("liquid", "illiquid") and KIND[b] in ("liquid", "illiquid") and p.label != KIND[b]:
