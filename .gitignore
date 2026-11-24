@@ -1,0 +1,25 @@
+# Never commit data. Real portfolio files stay on work PCs and the shared drive;
+# synthetic files are generated on demand (scripts/make_synthetic.py -> out/).
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.parquet
+*.db
+*.sqlite
+*.pdf
+out/
+data/
+real/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.venv/
+*.egg-info/
+node_modules/
+.env
+.env.*
+.DS_Store
