@@ -9,7 +9,7 @@ by evidence that is rerun automatically, not by trust.
 | --- | --- | --- | --- |
 | Model builder | Build thread / quant-researcher and software-engineer agents | Writes and documents models | `riskcore/`, `docs/` |
 | Model validator | Separate thread / `model-validator` agent | Is the maths right, and is the method fit for this portfolio? | `validation/`, `tests/parity/` |
-| QA | `qa-specialist` agent | Does the software behave: edge cases, regressions, go / no-go | `tests/`, `e2e/` |
+| QA | `qa-engineer` agent | Does the software behave: edge cases, regressions, go / no-go | `tests/`, `e2e/` |
 | Model owner | Hessa | Approves methodology and each validation verdict | Everything, by decision |
 
 The builder never edits `validation/`; the validator never edits `riskcore/`.
