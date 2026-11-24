@@ -1,7 +1,7 @@
-"""Independent validation of riskcore, part 2: open findings, written as tests.
+"""Independent validation of riskcore, part 2: findings, written as tests.
 
-Each test states what a correct engine should do and is marked `xfail(strict=True)`:
-it is expected to fail today. When the builder fixes a finding, its test starts passing,
+Each test states what a correct engine should do. An open finding is marked `xfail(strict=True)`:
+it is expected to fail until fixed. When the builder fixes a finding, its test starts passing,
 pytest reports "XPASS (strict)" as a failure, and the fix must be re-reviewed by the
 validator, who then removes the marker. Finding ids (V-xx) match
 validation/riskcore-0.1.0.md. Synthetic data only.
@@ -36,7 +36,7 @@ def run36(port):
     return analyse(ds, Settings(today=TODAY, as_of=AS_OF, window=36, risk_benchmark="50/50 reference (synthetic)"))
 
 
-@pytest.mark.xfail(strict=True, reason="V-01: smoothed and stale returns are used as reported; desmoothing is not wired in")
+# V-01: fixed in PR #4, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v01_portfolio_vol_within_10pct_of_true_vol(port, run36):
     """The synthetic generator keeps each fund's true (unsmoothed) return, so we know the right answer."""
     tr = port.valuations.pivot(index="month", columns="instrument", values="true_return")
@@ -47,13 +47,13 @@ def test_v01_portfolio_vol_within_10pct_of_true_vol(port, run36):
     assert run36["risk"].vol_a >= 0.9 * true_vol  # today: 7.9% reported vs 9.1% true
 
 
-@pytest.mark.xfail(strict=True, reason="V-02: quarterly-valued funds have 2/3 zero months, under the 70% stale threshold")
+# V-02: fixed in PR #4, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v02_quarterly_valued_fund_flagged_stale(run36):
     pe = next(h for h in run36["risk"].holdings if h["name"] == PE)
     assert pe["stale"]
 
 
-@pytest.mark.xfail(strict=True, reason="V-03: same-month OLS cannot see a quarterly fund's lagged market exposure")
+# V-03: fixed in PR #4, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v03_private_equity_equity_beta_roughly_right(run36):
     names = [h["name"] for h in run36["risk"].holdings]
     true_beta = next(s.betas[0] for s in _specs() if s.name == PE)  # 1.2
@@ -61,7 +61,7 @@ def test_v03_private_equity_equity_beta_roughly_right(run36):
     assert abs(est - true_beta) < 0.5
 
 
-@pytest.mark.xfail(strict=True, reason="V-04: a factor name the preset list does not know gets a 0% shock, silently")
+# V-04: fixed in PR #4, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v04_unrecognised_factor_names_are_not_silently_zero(port):
     ds = to_dataset(port)
     new = {}
@@ -75,7 +75,7 @@ def test_v04_unrecognised_factor_names_are_not_silently_zero(port):
     assert eq20["port"] != 0.0  # today: every hypothetical scenario shows exactly 0.0, with no warning
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason="V-05: Brinson crashes when an asset class has a benchmark weight but no index")
+# V-05: fixed in PR #4, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v05_brinson_policy_weight_without_index(port):
     ds = to_dataset(port)
     pol = {"Equities": (0.35, ds.find_series("Global equities")),
@@ -83,3 +83,20 @@ def test_v05_brinson_policy_weight_without_index(port):
            "Alternative": (0.10, None)}
     out = brinson(ds, ["2025-01", "2025-02", "2025-03"], pol)
     assert out["alloc"].sum() + out["sel"].sum() == pytest.approx(out["excess"])
+
+
+@pytest.mark.xfail(strict=True, reason="V-17: two factors matched to one scenario role by name pattern both take the same shock")
+def test_v17_one_factor_per_role_unless_mapped():
+    from riskcore.data import Series
+    from riskcore.stress import factor_roles
+    fs = [Series("Global equities", "factor", "SYN-EQ"), Series("EM equities", "factor", "SYN-EM")]
+    roles = factor_roles(fs)
+    assert roles.count("globalequities") <= 1  # today both are 'globalequities', so EM is shocked -20% in 'Equities fall 20%'
+
+
+@pytest.mark.xfail(strict=True, reason="V-18: quarterly factor model's residual comes from still-smoothed quarterly returns, so it is too small")
+def test_v18_private_equity_vol_within_15pct_of_true(port, run36):
+    tr = port.valuations.pivot(index="month", columns="instrument", values="true_return")
+    true_vol = float(tr.loc[run36["months"], PE].std(ddof=1) * math.sqrt(12))
+    pe = next(h for h in run36["risk"].holdings if h["name"] == PE)
+    assert pe["vol_a"] >= 0.85 * true_vol  # today: 15.7% modelled vs 19.9% true
