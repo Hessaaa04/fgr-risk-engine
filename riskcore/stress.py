@@ -62,6 +62,16 @@ def factor_roles(factors: list[Series], mapping: dict[str, str] | None = None) -
             continue
         hit = next((r for r, rx in ROLES.items() if re.search(rx, f"{f.name} {f.ticker}", re.I)), None)
         out.append(hit)
+    # V-17: a role matched by pattern to more than one factor goes only to a factor whose name is exactly the role
+    # (e.g. "Global equities"); otherwise to none, so scenarios needing it report an error until mapped explicitly
+    explicit = {i for i, f in enumerate(factors) if norm(f.name) in mapping}
+    for role in set(r for r in out if r):
+        idx = [i for i, r in enumerate(out) if r == role and i not in explicit]
+        if len(idx) + sum(1 for i in explicit if out[i] == role) > 1:
+            exact = [i for i in idx if norm(factors[i].name) == role]
+            for i in idx:
+                if not (len(exact) == 1 and i == exact[0] and not any(out[j] == role for j in explicit)):
+                    out[i] = None
     return out
 
 

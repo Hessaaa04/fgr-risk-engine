@@ -12,7 +12,8 @@ Two cases, applied to the estimation matrix before any risk figure is computed:
    fund's own quarters and regressed on the global equity factor for the same quarter and the
    quarter before (Dimson, lags summed), because appraisal-based values react late. The window's
    monthly cells are replaced by alpha/3 + beta x equity_t, and the residual variance (per month)
-   is added to the covariance diagonal. Lineage FACTOR_MODEL. Needs 12+ quarters.
+   is added to the covariance diagonal, scaled up for the smoothing left in the residuals (monthly smoothing
+   inferred from their quarterly autocorrelation, at least QUARTERLY_PHI_FLOOR). Lineage FACTOR_MODEL. Needs 12+ quarters.
    Only equities are used: 40 quarters cannot support five factors (validator's parsimony rule).
 
 Valued yearly: about ten data points cannot support any estimate, so nothing is fitted. An
@@ -39,6 +40,10 @@ PHI_MIN = 0.10  # below this, smoothing is too small to correct
 MIN_VOL_A = 0.01  # cash-like holdings (under 1% a year) are autocorrelated through interest rates, not appraisal smoothing
 MIN_RUN = 36  # months of unbroken monthly history to estimate phi
 MIN_QUARTERS = 12
+# Assumed minimum monthly appraisal smoothing for quarterly-valued funds (V-18). Published estimates for private
+# equity and appraisal-based property are typically 0.4 to 0.7; 40 quarters cannot pin it down, so 0.5 is assumed
+# unless the data show more. An assumption: shown in the app and logged as D25.
+QUARTERLY_PHI_FLOOR = 0.5
 
 
 def _last_run(ms: list[str]) -> list[str]:
@@ -82,8 +87,36 @@ def quarterly_dimson(hist: dict[str, float], eq: Series) -> dict | None:
     coef, *_ = np.linalg.lstsq(Fm, y, rcond=None)
     res = y - Fm @ coef
     dof = max(len(rows) - 3, 1)
+    # V-18: the residual is still appraisal-smoothed. Smoothing inside each quarter hides variance that quarterly
+    # autocorrelation barely shows, so infer the monthly smoothing parameter from the residuals' quarterly
+    # autocorrelation (inverting the AR(1) filter), apply a documented floor, and scale the variance back up.
+    rho = ar1(res)
+    phi_m = max(_phi_from_quarterly_ac(rho), QUARTERLY_PHI_FLOOR)
+    ratio, _ = _quarterly_smoothing(phi_m)
     return {"alpha_q": float(coef[0]), "beta": float(coef[1] + coef[2]), "beta_0": float(coef[1]), "beta_1": float(coef[2]),
-            "resid_var_q": float(res @ res / dof), "n": len(rows)}
+            "resid_var_q": float(res @ res / dof) / ratio, "phi_m": phi_m, "phi_floored": phi_m == QUARTERLY_PHI_FLOOR, "n": len(rows)}
+
+
+def _quarterly_smoothing(phi: float, K: int = 240) -> tuple[float, float]:
+    """For monthly AR(1) appraisal smoothing with parameter phi, quarterly sums of the smoothed returns have
+    (variance / true variance, lag-1 quarterly autocorrelation), assuming independent true monthly returns."""
+    w = (1 - phi) * phi ** np.arange(K)
+    c = np.convolve(w, np.ones(3))[:K]
+    var = float(c @ c)
+    return var / 3.0, float(c[3:] @ c[:-3]) / var
+
+
+def _phi_from_quarterly_ac(rho: float) -> float:
+    """Invert _quarterly_smoothing's autocorrelation by bisection on [0, PHI_CAP]."""
+    lo, hi = 0.0, PHI_CAP
+    if rho <= 0:
+        return 0.0
+    if rho >= _quarterly_smoothing(hi)[1]:
+        return hi
+    for _ in range(50):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if _quarterly_smoothing(mid)[1] < rho else (lo, mid)
+    return lo
 
 
 def apply(ds: Dataset, inp: EstimationInput, factors: list[Series], roles: list[str | None] | None = None,
@@ -142,7 +175,7 @@ def apply(ds: Dataset, inp: EstimationInput, factors: list[Series], roles: list[
                     inp.lineage[t][i] = Lineage.FACTOR_MODEL
             extra[i] = resid_m
             adj.append({"name": h.name, "freq": freq, "method": method, "beta": fit["beta"], "n": fit["n"],
-                        "resid_vol_a": math.sqrt(resid_m * 12)})
+                        "resid_vol_a": math.sqrt(resid_m * 12), "phi": fit.get("phi_m"), "phi_floored": fit.get("phi_floored", False)})
     inp.X_raw = inp.X
     inp.X = X
     inp.extra_var = extra if extra.any() else None

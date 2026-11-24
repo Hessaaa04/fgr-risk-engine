@@ -402,7 +402,7 @@
     else if (!A.length) h += '<p class="small mut">No holding needed a correction.</p>';
     else h += '<div class="scroll"><table><tr><th>Holding</th><th>Valued</th><th>What was done</th><th class="r">Smoothing (φ)</th><th class="r">Equity beta used</th><th class="r">Based on</th><th class="r">Fund-specific volatility added</th></tr>' +
       A.map(function (x) {
-        var m = x.method === 'desmoothed' ? 'Desmoothed' + (x.phi_capped ? ' <span class="chip w">φ capped at 0.7</span>' : '') : x.method === 'factor model' ? 'Modelled from equities (this quarter and last)' : x.method === 'assumed beta' ? '<span class="chip w">your assumption</span> Modelled from equities' : '<span class="chip b">needs your input</span>';
+        var m = x.method === 'desmoothed' ? 'Desmoothed' + (x.phi_capped ? ' <span class="chip w">φ capped at 0.7</span>' : '') : x.method === 'factor model' ? 'Modelled from equities (this quarter and last)' + (x.phi_floored ? ' <span class="chip w">smoothing assumed 0.5</span>' : '') : x.method === 'assumed beta' ? '<span class="chip w">your assumption</span> Modelled from equities' : '<span class="chip b">needs your input</span>';
         return '<tr><td>' + esc(short(x.name)) + '</td><td>' + x.freq + '</td><td>' + m + '</td><td class="r num">' + num(x.phi) + '</td><td class="r num">' + num(x.beta) + '</td><td class="r num">' + (x.method === 'desmoothed' ? x.n + ' months' : x.method === 'factor model' ? x.n + ' quarters' : '–') + '</td><td class="r num">' + pct(x.resid_vol_a) + '</td></tr>';
       }).join('') + '</table></div>';
     var yearly = A.filter(function (x) { return x.freq === 'annual'; });
