@@ -8,13 +8,14 @@ filled-in rather than reported returns.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import numpy as np
 
 from .calendar import month_open, ym_add, ym_range
 from .data import Dataset, Holding, norm
+from .smoothing import observed_frequency
 
 MAX_MISSING_SHARE = 0.02  # a month counts only if <= 2% of value lacks a return
 
@@ -25,6 +26,8 @@ class Lineage(StrEnum):
     PEER_FILL = "peer_fill"  # value-weighted return of current holdings in the same sleeve
     PAST_SLEEVE_FILL = "past_sleeve_fill"  # what the fund's holdings in that sleeve earned at the time
     ZERO_FILL = "zero_fill"  # nothing available: set to 0 (flagged as no data)
+    DESMOOTHED = "desmoothed"  # the holding's own return with appraisal smoothing removed (Geltner)
+    FACTOR_MODEL = "factor_model"  # modelled from market factors because the holding is valued quarterly or yearly
 
 
 def complete_months(ds: Dataset, today: str) -> list[str]:
@@ -76,6 +79,10 @@ class EstimationInput:
     X: np.ndarray  # T x N monthly returns
     lineage: list[list[Lineage]]  # T x N
     coverage: dict[str, float]  # share of weight with own (or proxy) data, per candidate month
+    freq: list[str] = field(default_factory=list)  # valuation frequency per position: recorded, else observed
+    X_raw: np.ndarray | None = None  # the matrix before any illiquid adjustment (None = not adjusted)
+    extra_var: np.ndarray | None = None  # monthly idiosyncratic variance added for factor-modelled holdings
+    adjustments: list[dict] = field(default_factory=list)  # what was changed, per holding, for display
 
     @property
     def aum(self) -> float:
@@ -171,7 +178,8 @@ def build_estimation_input(
                     row[i] = Lineage.PAST_SLEEVE_FILL
         lin.append(row)
 
-    return EstimationInput(as_of, pos, values, w, sleeves, sidx, months, X, lin, coverage)
+    freq = [h.valuation_frequency or observed_frequency(hist[i]) for i, h in enumerate(pos)]
+    return EstimationInput(as_of, pos, values, w, sleeves, sidx, months, X, lin, coverage, freq)
 
 
 def _past_sleeve(ds: Dataset, skey: str, ym: str) -> float | None:

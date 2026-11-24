@@ -49,9 +49,10 @@ def brinson(ds: Dataset, months: list[str], policy: dict[str, tuple[float, Serie
             rps.append(a / b if b > 0 else 0.0)
         rps = np.array(rps)
         rbs = [ser.ret.get(m) if ser is not None else None for _, ser in pol]
-        Rb = sum(wb * rbs[s] for s, (wb, _) in enumerate(pol) if wb > 0)
+        # a class with a benchmark weight but no index (or no index return that month) uses its own return (V-05)
         rb = np.array([rps[s] if rbs[s] is None else rbs[s] for s in range(len(SL))])
         wb = np.array([p[0] for p in pol])
+        Rb = float(wb @ rb)
         alloc = (wp - wb) * (rb - Rb)
         sel = wb * (rps - rb) + (wp - wb) * (rps - rb)
         rows.append((alloc, sel))
@@ -65,4 +66,6 @@ def brinson(ds: Dataset, months: list[str], policy: dict[str, tuple[float, Serie
         kt = carino_k(RpT[t], RbT[t]) / k
         A += a * kt
         S += s * kt
-    return {"Rp": Rp, "Rb": Rb, "excess": Rp - Rb, "alloc": A, "sel": S, "sleeves": SL}
+    own = [SL[s] for s, (w, ser) in enumerate(pol) if w > 0 and (ser is None or any(m not in ser.ret for m in months))]
+    # own_return_classes: weighted classes whose benchmark return was their own return (no index): the benchmark is partly the portfolio
+    return {"Rp": Rp, "Rb": Rb, "excess": Rp - Rb, "alloc": A, "sel": S, "sleeves": SL, "own_return_classes": own}

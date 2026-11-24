@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 MIN_MONTHS = 36
-PHI_CAP = 0.9
+PHI_CAP = 0.7  # above this, desmoothing mostly amplifies noise (validator, V-01)
 
 
 def ar1(r: np.ndarray) -> float:

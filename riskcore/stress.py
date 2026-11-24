@@ -40,10 +40,40 @@ def _compound(x) -> float:
     return float(np.prod(1 + np.asarray(x, float)) - 1)
 
 
-def resolve_scenario(sc: dict, factors: list[Series], SF: np.ndarray, propagate: bool = True) -> dict:
+ROLES = {  # role key used by the scenario library -> how to recognise the factor (name or ticker)
+    "globalequities": r"equit|acwi|msci\s*world|mxwd|ndd|world\s*index",
+    "ustreasuries": r"treasur|\bust\b|govt|government\s*bond|lutl|luat",
+    "highyieldcredit": r"high\s*yield|\bhy\b|junk|lf98|h0a0",
+    "usdollar": r"dollar|\bdxy\b|\busd\b|bbdxy",
+    "oil": r"\boil\b|brent|wti|crude|\bcl1\b|\bco1\b",
+}
+
+
+def factor_roles(factors: list[Series], mapping: dict[str, str] | None = None) -> list[str | None]:
+    """The scenario role of each factor (V-04): an explicit mapping (factor name -> role) wins,
+    then the factor's own name or ticker matched against ROLES. None = not recognised."""
+    import re
+
+    mapping = {norm(k): v for k, v in (mapping or {}).items()}
+    out: list[str | None] = []
+    for f in factors:
+        if norm(f.name) in mapping:
+            out.append(mapping[norm(f.name)])
+            continue
+        hit = next((r for r, rx in ROLES.items() if re.search(rx, f"{f.name} {f.ticker}", re.I)), None)
+        out.append(hit)
+    return out
+
+
+def resolve_scenario(sc: dict, factors: list[Series], SF: np.ndarray, propagate: bool = True,
+                     roles: list[str | None] | None = None) -> dict:
     """Factor moves for a scenario. Unspecified factors move with the specified ones in line with
-    their history (conditional mean s_U = S_UK S_KK^-1 s_K) unless propagation is off."""
-    keys = [norm(f.name) for f in factors]
+    their history (conditional mean s_U = S_UK S_KK^-1 s_K) unless propagation is off.
+
+    Scenario moves are keyed by role (see factor_roles). If the scenario moves a role that no
+    loaded factor fills, the result carries `unmapped` and must not be shown as a number (V-04)."""
+    roles = roles if roles is not None else factor_roles(factors)
+    keys = [r or norm(f.name) for r, f in zip(roles, factors)]  # a factor with no role can still be moved by its own name
     s: list[float | None] = [None] * len(keys)
     src = "preset"
     if sc["kind"] == "historical":
@@ -58,13 +88,15 @@ def resolve_scenario(sc: dict, factors: list[Series], SF: np.ndarray, propagate:
         s = [(sc.get("shocks") or {}).get(k) for k in keys]
     Kn = [i for i, v in enumerate(s) if v is not None]
     Un = [i for i, v in enumerate(s) if v is None]
+    wanted = (sc.get("preset") if src == "preset" else sc.get("shocks") if sc["kind"] != "historical" else None) or {}
+    unmapped = sorted(k for k, v in wanted.items() if v is not None and k not in keys)
     out = np.array([0.0 if v is None else float(v) for v in s])
     if Un and Kn and propagate and sc["kind"] != "historical":
         try:
             out[Un] = SF[np.ix_(Un, Kn)] @ np.linalg.solve(SF[np.ix_(Kn, Kn)], out[Kn])
         except np.linalg.LinAlgError:
             out[Un] = 0.0
-    return {"shocks": out, "src": src, "specified": Kn}
+    return {"shocks": out, "src": src, "specified": Kn, "unmapped": unmapped}
 
 
 def apply_shocks(B: np.ndarray, w: np.ndarray, sleeve_idx: np.ndarray, n_sleeves: int, s: np.ndarray, bench_beta) -> dict:

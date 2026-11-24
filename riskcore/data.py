@@ -31,6 +31,7 @@ class Holding:
     sleeve: str
     liquid: bool
     data: dict[str, Observation] = field(default_factory=dict)
+    valuation_frequency: str | None = None  # from the instrument record ('monthly'|'quarterly'|'annual'); None = not recorded
 
 
 @dataclass

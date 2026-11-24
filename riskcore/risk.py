@@ -84,6 +84,9 @@ def analyse_risk(inp: EstimationInput, conf: float = 0.95) -> RiskResult:
     X, w = inp.X, inp.w
     T, N = X.shape
     C = covariance(X)
+    if inp.extra_var is not None:  # idiosyncratic variance of factor-modelled holdings (not in X, so not in historical VaR)
+        C = C + np.diag(inp.extra_var)
+    Xr = inp.X_raw if inp.X_raw is not None else X
     Cw = C @ w
     var_p = float(w @ Cw)
     sd = math.sqrt(max(var_p, 0.0))
@@ -97,10 +100,12 @@ def analyse_risk(inp: EstimationInput, conf: float = 0.95) -> RiskResult:
     for i, h in enumerate(inp.positions):
         w2 = w.copy()
         w2[i] = 0
-        own = [inp.lineage[t][i] in (Lineage.REPORTED, Lineage.PROXY) for t in range(T)]
+        own = [inp.lineage[t][i] in (Lineage.REPORTED, Lineage.PROXY, Lineage.DESMOOTHED, Lineage.FACTOR_MODEL) for t in range(T)]
         real = sum(own)
-        zeros = sum(1 for t in range(T) if own[t] and X[t, i] == 0)
+        zeros = sum(1 for t in range(T) if own[t] and Xr[t, i] == 0)
         proxied = any(inp.lineage[t][i] == Lineage.PROXY for t in range(T))
+        freq = inp.freq[i] if inp.freq else "unknown"
+        stale_v042 = real > 0 and zeros / real >= STALE_ZERO_SHARE and not proxied
         sdi = math.sqrt(max(C[i, i], 0.0))
         holdings.append(
             {
@@ -116,7 +121,10 @@ def analyse_risk(inp: EstimationInput, conf: float = 0.95) -> RiskResult:
                 "ivar": VaR - z * math.sqrt(max(float(w2 @ C @ w2), 0.0)),
                 "real": real,
                 "filled": T - real,
-                "stale": real > 0 and zeros / real >= STALE_ZERO_SHARE and not proxied,
+                # V-02: valued quarterly or yearly counts as stale whatever the zero count; the v0.4.2 rule is kept for parity
+                "stale": (stale_v042 or freq in ("quarterly", "annual")) and not proxied,
+                "stale_v042": stale_v042,
+                "freq": freq,
                 "no_data": real == 0,
                 "proxied": proxied,
             }

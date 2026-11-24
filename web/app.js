@@ -8,7 +8,7 @@
   var KEY = 'fgr-risk-engine-v2-settings';
   var PAGES = [['overview', 'Overview'], ['data', 'Data'], ['risk', 'Risk'], ['benchmarks', 'Benchmarks'], ['stress', 'Stress & scenarios'],
     ['attribution', 'Attribution'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
-  var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true };
+  var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {} };
   var S = {
     settings: JSON.parse(JSON.stringify(DEF)), source: null, loadMsgs: [], issues: [], meta: null, R: null, busy: false,
     cmp: { names: null, period: '36', from: null, to: null }, cmpRes: null,
@@ -226,7 +226,7 @@
       tile('Worst fall, peak to trough', pct(H.max_dd), 'Over the ' + R.T + ' months used') +
       tile('Tracking error vs ' + esc(short(R.risk_benchmark || 'reference')), pct(ar.te), 'Beta ' + num(ar.beta)) +
       tile('Can be sold within a month', pct(R.liquidity.liquid), 'Target ' + pct(R.liquidity.target, 0) + (R.liquidity.shortfall > 0 ? ' · below target' : ''), R.liquidity.shortfall > 0 ? 'neg' : '') + '</section>';
-    var top = (R.stress || []).slice().sort(function (a, b) { return a.port - b.port; }).slice(0, 4);
+    var top = (R.stress || []).filter(function (s) { return !s.error; }).slice().sort(function (a, b) { return a.port - b.port; }).slice(0, 4);
     h += '<div class="grid2"><section class="panel"><h2>Where the money is, and where the risk is</h2>' + pairBars(R.sleeves, 'w', 'rc', 'Share of value', 'Share of risk') + '</section>' +
       '<section class="panel"><h2>Risk over time (rolling ' + R.window + ' months)</h2><p class="sub small">Volatility the engine would have reported at each month-end, and what the portfolio actually did.</p>' +
       lineChart('ov-roll', R.rolling.months, [{ name: 'Estimated volatility', values: R.rolling.vol, c: 'c1' }, { name: 'Actual volatility (trailing)', values: R.rolling.realised, c: 'c2', dash: true }], function (v) { return pct(v, 0); }, { label: 'Rolling volatility' }) + '</section></div>';
@@ -257,6 +257,11 @@
         return '<tr><td>' + esc(short(x.name)) + '</td><td>' + esc(x.sleeve) + '</td><td class="r num">' + pct(x.w) + '</td><td class="r num">' + x.real + '</td><td class="r num' + (x.filled ? ' neg' : '') + '">' + x.filled + '</td><td>' + x.freq + '</td><td>' + f.join('') + '</td>' +
           '<td><input type="checkbox" data-liq="' + esc(x.name) + '"' + (x.liquid ? ' checked' : '') + ' aria-label="Liquid"></td><td>' + sel('px' + i, st.proxies[x.name] || '', px, 'data-proxy="' + esc(x.name) + '"') + '</td></tr>';
       }).join('') + '</table></div></section>';
+    if (R.factor_roles) {
+      var RL = [['', 'Not used in scenarios'], ['globalequities', 'Global equities'], ['ustreasuries', 'US Treasuries'], ['highyieldcredit', 'High yield credit'], ['usdollar', 'US dollar'], ['oil', 'Oil']];
+      h += '<section class="panel"><h2>Which factor is which</h2><p class="sub small">The stress scenarios move five market factors. Check that each of your factor series is matched to the right one. A scenario that needs an unmatched factor is not run, rather than shown as zero.</p><div class="scroll"><table><tr><th>Your factor series</th><th>Used in scenarios as</th></tr>' +
+        Object.keys(R.factor_roles).map(function (n, i) { return '<tr><td>' + esc(n) + '</td><td>' + sel('role' + i, st.factor_map[n] || R.factor_roles[n] || '', RL, 'data-role="' + esc(n) + '"') + '</td></tr>'; }).join('') + '</table></div></section>';
+    }
     h += '<section class="panel"><h2>Market series loaded</h2><div class="scroll"><table><tr><th>Series</th><th>Type</th><th>Ticker</th><th class="r">Months</th><th>From</th><th>To</th></tr>' +
       M.series.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.type) + '</td><td>' + esc(s.ticker) + '</td><td class="r num">' + s.n + '</td><td>' + ym(s.from) + '</td><td>' + ym(s.to) + '</td></tr>'; }).join('') + '</table></div></section>';
     return h;
@@ -270,7 +275,7 @@
       tile('VaR ' + c + ', normal', pct(H.var), money(H.var * R.aum) + ' in a month') +
       tile('ES ' + c + ', normal', pct(H.es), money(H.es * R.aum)) +
       tile('VaR ' + c + ', from history', pct(H.hvar), ok(H.hvar_range[0]) ? 'Likely range ' + pct(H.hvar_range[0]) + '–' + pct(H.hvar_range[1]) : 'Needs 24 months') +
-      tile('ES ' + c + ', from history', pct(H.hes), 'Average of the worst months') +
+      tile('ES ' + c + ', from history', pct(H.hes), 'Average of the worst months; leaves out the fund-specific part added for modelled funds') +
       tile('Worst fall, peak to trough', pct(H.max_dd), 'Today’s holdings over the window') + '</section>';
     h += '<section class="panel"><h2>Rolling risk</h2><p class="sub small">Each point is what the engine would have reported at that month-end using the ' + R.window + ' months before it. The dashed line is the volatility the portfolio actually had over the same trailing months. If the solid line sits well below the dashed one, the model was understating risk. Both lines are held down by funds with smoothed valuations (see Illiquid assets).</p>' +
       lineChart('rk-roll', R.rolling.months, [{ name: 'Estimated volatility', values: R.rolling.vol, c: 'c1' }, { name: 'Actual volatility', values: R.rolling.realised, c: 'c2', dash: true }, { name: 'VaR ' + c + ' (1 month)', values: R.rolling.var, c: 'c3' }], function (v) { return pct(v, 0); }, { label: 'Rolling risk' }) + '</section>';
@@ -317,6 +322,7 @@
     var sel_ = S.stressSel;
     h += '<section class="panel"><h2>Scenario library</h2><p class="sub small">Historical scenarios replay what the factors did in that period (from your market data when it covers it, otherwise approximate preset moves). Click a row to see it by sleeve, or load it into the builder below.</p><div class="scroll"><table><tr><th>Scenario</th><th>Source</th><th class="r">Portfolio</th><th class="r">In dollars</th><th class="r">' + esc(short(R.risk_benchmark || 'Reference')) + '</th><th class="r">What actually happened</th><th></th></tr>' +
       R.stress.map(function (s) {
+        if (s.error) return '<tr><td>' + esc(s.name) + '</td><td colspan="6" class="neg small">Not run. ' + esc(s.error) + ' Match your factors on the <a href="#data">Data</a> page.</td></tr>';
         return '<tr class="click' + (sel_ === s.id ? ' sel' : '') + '" data-stress="' + s.id + '"><td>' + esc(s.name) + (s.from ? ' <span class="mut small">' + ym(s.from) + '–' + ym(s.to) + '</span>' : '') + '</td><td><span class="chip">' + (s.src === 'data' ? 'your data' : s.src === 'preset' ? 'preset' : 'hypothetical') + '</span></td><td class="r num ' + cls(s.port) + '">' + spct(s.port) + '</td><td class="r num">' + money(s.loss_value) + '</td><td class="r num">' + spct(s.bench) + '</td><td class="r num">' + (ok(s.actual) ? spct(s.actual) : '–') + '</td><td><button class="btn" data-use="' + s.id + '" style="padding:2px 8px;font-size:.8rem">Use in builder</button></td></tr>';
       }).join('') + '</table></div>';
     if (sel_) { var s = R.stress.filter(function (x) { return x.id === sel_; })[0]; if (s) { var mx = Math.max.apply(null, s.by_sleeve.map(function (x) { return Math.abs(x.impact); }).concat([1e-9])); h += '<h3>' + esc(s.name) + ': by sleeve (contribution to the portfolio’s result)</h3><div class="bars">' + s.by_sleeve.map(function (x) { return '<div class="brow"><span>' + esc(x.name) + '</span><div>' + dbar(x.impact, mx) + '<div class="blab num"><span>' + spct(x.impact, 2) + '</span></div></div></div>'; }).join('') + '</div><p class="small mut">Factor moves: ' + R.factors.names.map(function (n, i) { return esc(n) + ' ' + spct(s.shocks[i], 1); }).join(' · ') + '</p>'; } }
@@ -373,6 +379,7 @@
       '<div class="scroll"><table><tr><th>Sleeve</th><th>Weight %</th><th>Index used for the sleeve</th></tr>' + A.policy.map(function (p, i) { return '<tr><td>' + esc(p.sleeve) + '</td><td><input type="number" min="0" max="100" step="1" value="' + (+p.weight || 0) + '" data-pw="' + i + '" style="width:80px"></td><td>' + sel('ps' + i, p.series, idx, 'data-ps="' + i + '"') + '</td></tr>'; }).join('') + '</table></div><div><button class="btn primary" id="at-run">Recalculate</button></div></section>';
     if (!A.ok) h += '<div class="banner warn">' + esc(A.reason || 'Attribution is not available.') + '</div>';
     else {
+      if (A.own_return_classes && A.own_return_classes.length) h += '<div class="banner warn"><b>No index chosen for ' + esc(A.own_return_classes.join(', ')) + '.</b> For those sleeves the benchmark uses the portfolio’s own return, so they show no selection effect and the benchmark total is partly the portfolio’s own result.</div>';
       h += '<section class="tiles">' + tile('Portfolio', spct(A.Rp), ym(A.from) + ' to ' + ym(A.to), cls(A.Rp)) + tile('Benchmark', spct(A.Rb), 'Weighted index returns', cls(A.Rb)) + tile('Difference', spct(A.excess, 2), 'Allocation ' + spct(A.alloc_total, 2) + ' · selection ' + spct(A.sel_total, 2), cls(A.excess)) + '</section>';
       var mx = Math.max.apply(null, A.sleeves.map(function (s) { return Math.max(Math.abs(s.alloc), Math.abs(s.sel)); }).concat([1e-9]));
       h += '<section class="panel"><h2>By sleeve</h2><div class="scroll"><table><tr><th>Sleeve</th><th class="r">Benchmark weight</th><th class="r">Allocation</th><th style="min-width:120px"></th><th class="r">Selection</th><th style="min-width:120px"></th><th class="r">Total</th></tr>' +
@@ -387,13 +394,28 @@
   };
 
   PAGE.illiquid = function () {
-    var R = S.R, h = head('Illiquid assets', 'Funds valued by appraisal or by the manager (property, private equity, strategic holdings, many hedge funds) report smoothed returns. Smoothing makes them look steadier and less linked to markets than they are, so the portfolio’s risk is understated.', false);
-    h += '<div class="banner warn"><b>Not yet used in the risk figures.</b> This page shows how big the effect is. Correcting the headline risk for it is the first fix from the independent model check, and is being built next.</div>';
-    h += '<section class="panel"><div class="scroll"><table><tr><th>Holding</th><th>Sleeve</th><th class="r">Weight</th><th>Valued</th><th class="r">Months</th><th class="r">Volatility reported</th><th class="r">After desmoothing</th><th class="r">Smoothing (φ)</th><th class="r">Link to equities, reported</th><th class="r">After desmoothing</th><th>What it needs</th></tr>' +
+    var R = S.R, st = S.settings, h = head('Illiquid assets', 'Funds valued by appraisal or by the manager (property, private equity, strategic holdings, many hedge funds) report smoothed or infrequent returns. Left alone, they look steadier and less linked to markets than they are, and the portfolio’s risk is understated.', false);
+    h += '<section class="panel"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2 style="margin:0">Correction for smoothed returns</h2>' + seg('desm', st.desmooth ? 1 : 0, [[1, 'On'], [0, 'Off (as v0.4.2)']]) + '</div>' +
+      '<p class="sub small">When on, every risk figure in the app uses the corrected returns below. Switch it off to see how much difference it makes.</p>';
+    var A = R.adjustments || [];
+    if (!st.desmooth) h += '<p class="small"><span class="chip w">off</span> Risk is calculated from the returns as reported.</p>';
+    else if (!A.length) h += '<p class="small mut">No holding needed a correction.</p>';
+    else h += '<div class="scroll"><table><tr><th>Holding</th><th>Valued</th><th>What was done</th><th class="r">Smoothing (φ)</th><th class="r">Equity beta used</th><th class="r">Based on</th><th class="r">Fund-specific volatility added</th></tr>' +
+      A.map(function (x) {
+        var m = x.method === 'desmoothed' ? 'Desmoothed' + (x.phi_capped ? ' <span class="chip w">φ capped at 0.7</span>' : '') : x.method === 'factor model' ? 'Modelled from equities (this quarter and last)' : x.method === 'assumed beta' ? '<span class="chip w">your assumption</span> Modelled from equities' : '<span class="chip b">needs your input</span>';
+        return '<tr><td>' + esc(short(x.name)) + '</td><td>' + x.freq + '</td><td>' + m + '</td><td class="r num">' + num(x.phi) + '</td><td class="r num">' + num(x.beta) + '</td><td class="r num">' + (x.method === 'desmoothed' ? x.n + ' months' : x.method === 'factor model' ? x.n + ' quarters' : '–') + '</td><td class="r num">' + pct(x.resid_vol_a) + '</td></tr>';
+      }).join('') + '</table></div>';
+    var yearly = A.filter(function (x) { return x.freq === 'annual'; });
+    if (st.desmooth && yearly.length) {
+      h += '<h3>Funds valued once a year</h3><p class="sub small">About ten yearly values cannot support an estimate, so these need your judgement: how much does each tend to move when global equities move 1%? (For example 0.5 for core property, 1.0 or more for a private company.) Leave blank to keep the reported returns, which understate risk.</p><div class="scroll"><table><tr><th>Holding</th><th>Assumed equity beta</th></tr>' +
+        yearly.map(function (x, i) { var v = st.assumed_betas[x.name]; return '<tr><td>' + esc(short(x.name)) + '</td><td><input type="number" step="0.1" min="-1" max="3" id="ab' + i + '" data-ab="' + esc(x.name) + '" value="' + (v === undefined ? '' : v) + '" style="width:90px"></td></tr>'; }).join('') +
+        '</table></div>';
+    }
+    h += '</section>';
+    h += '<section class="panel"><h2>How smoothed each fund looks</h2><div class="scroll"><table><tr><th>Holding</th><th>Sleeve</th><th class="r">Weight</th><th>Valued</th><th class="r">Months</th><th class="r">Volatility reported</th><th class="r">After desmoothing</th><th class="r">Smoothing (φ)</th><th class="r">Link to equities, reported</th><th class="r">After desmoothing</th></tr>' +
       R.illiquid.map(function (x) {
-        var st = x.status === 'desmoothed' ? '<span class="chip">desmoothed</span>' : x.status === 'little smoothing' ? '<span class="chip">little smoothing</span>' : x.status === 'needs a proxy index' ? '<span class="chip w">a proxy index</span>' : '<span class="chip b">more history</span>';
-        return '<tr><td>' + esc(short(x.name)) + '</td><td>' + esc(x.sleeve) + '</td><td class="r num">' + pct(x.w) + '</td><td>' + x.freq + '</td><td class="r num">' + x.n + '</td><td class="r num">' + pct(x.obs_vol) + '</td><td class="r num">' + pct(x.desm_vol) + '</td><td class="r num">' + num(x.phi) + '</td><td class="r num">' + num(x.eq_obs) + '</td><td class="r num">' + num(x.eq_desm) + '</td><td>' + st + '</td></tr>';
-      }).join('') + '</table></div><p class="small mut">Desmoothing (Geltner) works only on monthly returns with at least 36 months. Funds valued quarterly or yearly need a listed index that behaves like them (a proxy), which you choose on the Data page.</p></section>';
+        return '<tr><td>' + esc(short(x.name)) + '</td><td>' + esc(x.sleeve) + '</td><td class="r num">' + pct(x.w) + '</td><td>' + x.freq + '</td><td class="r num">' + x.n + '</td><td class="r num">' + pct(x.obs_vol) + '</td><td class="r num">' + pct(x.desm_vol) + '</td><td class="r num">' + num(x.phi) + '</td><td class="r num">' + num(x.eq_obs) + '</td><td class="r num">' + num(x.eq_desm) + '</td></tr>';
+      }).join('') + '</table></div><p class="small mut">Desmoothing (Geltner) applies to monthly returns with at least 36 unbroken months. Quarterly funds are modelled from equity returns in the same and the previous quarter (Dimson), because appraisals react late.</p></section>';
     return h;
   };
 
@@ -417,7 +439,8 @@
       '<b>Risk window</b><span>By default the last 36 months (a rolling 3-year window), applied to today’s holdings. Switch to 5 or 10 years at the top of each page.</span>' +
       '<b>VaR and ES</b><span>Losses over one month, shown as positive numbers. “Normal” assumes a bell curve; “from history” uses the actual worst months. Ranges come from resampling the history (a block bootstrap, fixed seed so results repeat).</span>' +
       '<b>Trust label</b><span>High, Medium or Low, from how many months are used, how much of the history is the funds’ own reported data, and how much of the portfolio has stale prices.</span>' +
-      '<b>Status</b><span>Test build. An independent check of the maths passed the arithmetic, with conditions: risk for illiquid funds is understated until the fixes on the Illiquid assets page are built.</span>' +
+      '<b>Illiquid funds</b><span>Smoothed monthly funds are desmoothed; quarterly funds are modelled from equity returns; yearly-valued funds use your assumed beta. See the Illiquid assets page, where the correction can be switched off.</span>' +
+      '<b>Status</b><span>Test build. An independent check of the maths passed the arithmetic; its five main findings have been fixed and are awaiting re-review.</span>' +
       '</div></section>';
   };
 
@@ -430,12 +453,15 @@
           if (id === 'window') { S.settings.window = +v; saveSettings(); recompute(); }
           else if (id === 'conf') { S.settings.conf = +v; saveSettings(); recompute(); }
           else if (id === 'cmp') { S.cmp.period = v; runCompare(); }
+          else if (id === 'desm') { S.settings.desmooth = v === '1'; saveSettings(); recompute(); }
         });
       });
     });
     $$('select[data-set]').forEach(function (s) { s.addEventListener('change', function () { var k = s.getAttribute('data-set'); S.settings[k] = k === 'liq_target' ? +s.value : s.value || null; if (k !== 'as_of') saveSettings(); recompute(); }); });
     $$('input[data-liq]').forEach(function (c) { c.addEventListener('change', function () { S.settings.liquidity[c.getAttribute('data-liq')] = c.checked; saveSettings(); recompute(); }); });
     $$('select[data-proxy]').forEach(function (s) { s.addEventListener('change', function () { var n = s.getAttribute('data-proxy'); if (s.value) S.settings.proxies[n] = s.value; else delete S.settings.proxies[n]; saveSettings(); recompute(); }); });
+    $$('input[data-ab]').forEach(function (c) { c.addEventListener('change', function () { var n = c.getAttribute('data-ab'), o = {}; Object.keys(S.settings.assumed_betas).forEach(function (k) { if (k !== n) o[k] = S.settings.assumed_betas[k]; }); if (c.value !== '' && isFinite(+c.value)) o[n] = +c.value; S.settings.assumed_betas = o; saveSettings(); recompute(); }); });
+    $$('select[data-role]').forEach(function (c) { c.addEventListener('change', function () { var n = c.getAttribute('data-role'), o = {}; Object.keys(S.settings.factor_map).forEach(function (k) { if (k !== n) o[k] = S.settings.factor_map[k]; }); if (c.value) o[n] = c.value; S.settings.factor_map = o; saveSettings(); recompute(); }); });
     $$('input[data-cmp]').forEach(function (c) { c.addEventListener('change', function () { var n = c.getAttribute('data-cmp'); S.cmp.names = S.cmp.names.filter(function (x) { return x !== n; }); if (c.checked) S.cmp.names.push(n); runCompare(); }); });
     $$('th[data-sort]').forEach(function (t) { t.addEventListener('click', function () { var k = t.getAttribute('data-sort'); S.hsort = { k: k, d: S.hsort.k === k ? -S.hsort.d : (k === 'name' || k === 'sleeve' ? 1 : -1) }; render(); }); });
     $$('tr[data-stress]').forEach(function (r) { r.addEventListener('click', function (e) { if (e.target.closest('button')) return; var id = r.getAttribute('data-stress'); S.stressSel = S.stressSel === id ? null : id; render(); }); });

@@ -20,7 +20,7 @@ def _num(x):
 
 def to_dataset(p: SyntheticPortfolio) -> Dataset:
     inst = p.instruments.set_index("instrument")
-    holdings = {n: Holding(n, inst.loc[n, "sleeve"], bool(inst.loc[n, "liquid"])) for n in inst.index}
+    holdings = {n: Holding(n, inst.loc[n, "sleeve"], bool(inst.loc[n, "liquid"]), valuation_frequency=str(inst.loc[n, "valuation_frequency"])) for n in inst.index}
     v = p.valuations
     for name, month, value, ret in zip(v["instrument"], v["month"], v["value"], v["return"]):
         holdings[name].data[month] = Observation(_num(value), _num(ret))
