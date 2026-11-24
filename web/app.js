@@ -7,15 +7,16 @@
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
   var KEY = 'fgr-risk-engine-v2-settings';
   var PAGES = [['overview', 'Overview'], ['data', 'Data'], ['risk', 'Risk'], ['benchmarks', 'Benchmarks'], ['stress', 'Stress & scenarios'],
-    ['attribution', 'Attribution'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
-  var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {} };
+    ['attribution', 'Attribution'], ['liquidity', 'Liquidity'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
+  var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {},
+    liqr: { min_liquid: 0.75, horizon: 60, receivables: false, suspend: 0, terms: {} } };
   var S = {
     settings: JSON.parse(JSON.stringify(DEF)), source: null, loadMsgs: [], issues: [], meta: null, R: null, busy: false,
     cmp: { names: null, period: '36', from: null, to: null }, cmpRes: null,
     scen: { shocks: {}, propagate: true, base: '' }, scenRes: null, rev: null, revLoss: 0.10,
-    attr: { from: null, to: null, policy: null }, attrRes: null, stressSel: null, hsort: { k: 'w', d: -1 }
+    attr: { from: null, to: null, policy: null }, attrRes: null, liq: { files: [], res: null, month: null }, stressSel: null, hsort: { k: 'w', d: -1 }
   };
-  try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) Object.keys(DEF).forEach(function (k) { if (saved[k] !== undefined && k !== 'as_of') S.settings[k] = saved[k]; }); } catch (e) { /* storage unavailable */ }
+  try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) Object.keys(DEF).forEach(function (k) { if (saved[k] !== undefined && k !== 'as_of') S.settings[k] = k === 'liqr' ? Object.assign({}, DEF.liqr, saved[k]) : saved[k]; }); } catch (e) { /* storage unavailable */ }
   function saveSettings() { try { localStorage.setItem(KEY, JSON.stringify(S.settings)); } catch (e) { /* ignore */ } }
 
   // ------------------------------------------------------------ engine
@@ -149,11 +150,15 @@
   function readFiles(list) {
     var files = Array.prototype.slice.call(list || []); if (!files.length) return;
     Promise.all(files.map(function (f) { return f.arrayBuffer().then(function (b) { return { name: f.name, buf: b }; }); })).then(function (items) {
-      var vals = [], hist = [], msgs = [], issues = [];
+      var vals = [], hist = [], msgs = [], issues = [], liqf = [];
       items.forEach(function (it) {
         try {
           if (!/\.xlsx$|\.xlsm$/i.test(it.name)) throw new Error('only .xlsx or .xlsm Excel files can be read');
           var wb = XL.open(it.buf), did = false;
+          if (wb.sheetNames.some(function (n) { return /liq/i.test(n) && /terms/i.test(n); })) {
+            var sh = {}; wb.sheetNames.forEach(function (n) { sh[n] = wb.sheet(n, 400); });
+            liqf.push({ name: it.name, sheets: sh }); msgs.push(it.name + ': liquidity report (see the Liquidity page).'); return;
+          }
           XL.findValuationSheets(wb).forEach(function (sn) {
             var pv = XL.parseValuations(wb.sheet(sn, 800), sn); pv.file = it.name; vals.push(pv); did = true;
             var m = pv.months.filter(function (x) { return x.hasReturn; });
@@ -170,11 +175,21 @@
         } catch (e) { issues.push({ level: 'error', text: 'Could not read ' + it.name + ': ' + e.message }); }
       });
       S.loadMsgs = msgs; S.issues = issues;
+      if (liqf.length) {
+        var keep = S.liq.files.filter(function (f) { return !liqf.some(function (g) { return g.name === f.name; }); });
+        S.liq.files = keep.concat(liqf); S.liq.month = null; runLiquidity();
+        if (!vals.length) { if (page() !== 'liquidity') location.hash = 'liquidity'; else render(); return; }
+      }
       if (!vals.length) { S.error = 'No valuation sheet was found in the files chosen, so nothing was loaded. See the messages below.'; render(); return; }
       var ds = RE.buildDataset(vals, hist);
       ds.issues.forEach(function (i) { if (issues.indexOf(i) < 0) issues.push(i); });
       loadDataset(ds, items.map(function (i) { return i.name; }).join(', '));
     });
+  }
+  function runLiquidity() {
+    if (!S.liq.files.length) { S.liq.res = null; return Promise.resolve(); }
+    return engine.call('liquidity', [JSON.stringify(S.liq.files), JSON.stringify(S.settings.liqr)]).then(function (x) { S.liq.res = x; render(); })
+      .catch(function (e) { S.error = e.message; render(); });
   }
   function loadSample() {
     fetch('sample.json').then(function (r) { return r.json(); }).then(function (ds) { S.loadMsgs = ['Sample portfolio: 27 made-up funds, Aug 2015 to Oct 2026.']; S.issues = []; loadDataset(ds, 'sample portfolio (made-up data)'); });
@@ -188,7 +203,7 @@
     var p = page(), h = '';
     if (S.error) h += '<div class="banner bad"><b>Something went wrong.</b> ' + esc(S.error) + '</div>';
     if (S.busy) h += '<div class="banner">Calculating…</div>';
-    if (p !== 'data' && p !== 'about' && !S.R) h += empty();
+    if (p !== 'data' && p !== 'about' && p !== 'liquidity' && !S.R) h += empty();
     else h += PAGE[p]();
     $('#main').innerHTML = h;
     drawCharts(); wire();
@@ -393,6 +408,76 @@
     return h;
   };
 
+  PAGE.liquidity = function () {
+    var st = S.settings.liqr, L = S.liq.res;
+    var h = '<div class="pagehead"><div><h1>Liquidity</h1><p class="sub">How much of the portfolio can be turned into cash, and how fast. Load the monthly liquidity report (the “Liquidity Profile” workbook); load several months to see the trend. Files are read in this browser and never uploaded.</p></div></div>';
+    h += '<section class="panel"><div class="drop" id="drop"><b>Drop liquidity reports here</b><span class="sub small">or</span><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center"><button class="btn primary" id="pick">Choose Excel files</button><button class="btn" id="liq-sample">Use a made-up report</button>' + (S.liq.files.length ? '<button class="btn" id="liq-clear">Clear</button>' : '') + '</div><input type="file" id="file" accept=".xlsx,.xlsm" multiple hidden>' +
+      (S.liq.files.length ? '<span class="small mut">Loaded: ' + esc(S.liq.files.map(function (f) { return f.name; }).join(', ')) + '</span>' : '<span class="small mut">Your file’s layout must match the monthly report: a “Portfolio Liq. Terms &amp; NAV” sheet with Name and Max Days columns.</span>') + '</div></section>';
+    if (!L) return h;
+    (L.issues || []).forEach(function (i) { h += '<div class="banner ' + (i.level === 'error' ? 'bad' : 'warn') + '">' + esc(i.text) + '</div>'; });
+    if (!L.profiles.length) return h;
+    var n = L.profiles.length, k = S.liq.month === null ? n - 1 : Math.min(S.liq.month, n - 1), A = L.profiles[k], lim = A.limit;
+    var months = L.profiles.map(function (a, i) { return [i, (a.as_of || a.file) + (a.file ? ' · ' + a.file : '')]; });
+    h += '<div class="controls">' + (n > 1 ? ctl('Report', sel('liq-month', k, months)) : '') +
+      ctl('Receivables', seg('liq-rec', st.receivables ? 1 : 0, [[0, 'Left out'], [1, 'Included']])) +
+      ctl('Limit: at least', '<span><input type="number" id="liq-min" min="0" max="100" step="1" value="' + Math.round(st.min_liquid * 100) + '" style="width:64px"> % in cash within</span>') +
+      ctl('Days', sel('liq-h', st.horizon, [[5, '5 days'], [15, '15 days'], [40, '40 days'], [60, '60 days'], [90, '90 days'], [180, '180 days'], [365, '1 year']])) +
+      ctl('Stress: quarterly funds suspend', '<span><input type="range" id="liq-sus" min="0" max="100" step="5" value="' + Math.round(st.suspend * 100) + '" style="width:120px"> <b class="num">' + Math.round(st.suspend * 100) + '%</b></span>') + '</div>';
+    var okc = lim.ok ? 'pos' : 'neg';
+    h += '<div class="tiles">' +
+      tile('Assets (' + esc(A.as_of || '') + ')', money(A.aum), st.receivables ? 'Including receivables' : 'Excluding receivables') +
+      tile('Cash and deposits', pct(A.cash), 'Principal only') +
+      tile('Liquid (up to 60 days)', pct(A.liquid), 'Plus cash: ' + pct(A.liquid_incl_cash)) +
+      tile('Illiquid', pct(A.illiquid_for_limits), A.unknown ? 'Includes ' + pct(A.unknown) + ' with terms missing' : 'Over 60 days or no redemption right') +
+      tile('In cash within ' + lim.horizon + ' days', pct(lim.available), (lim.ok ? 'Meets' : 'Below') + ' the ' + pct(lim.min_liquid, 0) + ' limit (' + spct(lim.headroom) + ')', okc) +
+      tile('Same, under stress', pct(lim.stressed), st.suspend ? Math.round(st.suspend * 100) + '% of quarterly funds suspended' : 'Move the stress slider', lim.stressed_ok ? 'pos' : 'neg') + '</div>';
+
+    var KC = { cash: 'c3', liquid: 'c1', illiquid: 'c2', unknown: 'c6' }, op = [1, 0.85, 0.65, 0.45, 0.3];
+    var cnt = { cash: 0, liquid: 0, illiquid: 0, unknown: 0 };
+    var B = A.buckets.map(function (b) { b.c = KC[b.kind]; b.o = op[cnt[b.kind]++] || 0.3; return b; });
+    var rep = {}; (A.reconciliation || []).forEach(function (r) { if (r.bucket) rep[r.bucket] = r; });
+    h += '<section class="panel"><h2>By how fast it can be sold</h2><div style="display:flex;height:26px;border-radius:6px;overflow:hidden;margin:6px 0 12px" role="img" aria-label="Share of assets in each liquidity bucket">' +
+      B.filter(function (b) { return b.share > 0; }).map(function (b) { return '<div title="' + esc(b.name) + ': ' + pct(b.share) + '" style="width:' + (b.share * 100).toFixed(2) + '%;background:var(--' + b.c + ');opacity:' + b.o + '"></div>'; }).join('') + '</div>' +
+      '<div class="scroll"><table><tr><th>Bucket</th><th>Counts as</th><th class="r">Value</th><th class="r">Share</th>' + (Object.keys(rep).length ? '<th class="r">Report’s own figure</th><th class="r">Difference</th>' : '') + '</tr>' +
+      B.map(function (b) {
+        var r = rep[b.key];
+        return '<tr><td><span class="k" style="display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:var(--' + b.c + ');opacity:' + b.o + '"></span>' + esc(b.name) + '</td><td>' + b.kind + '</td><td class="r num">' + money(b.value) + '</td><td class="r num">' + pct(b.share) + '</td>' +
+          (Object.keys(rep).length ? '<td class="r num">' + (r ? money(r.report) : '–') + '</td><td class="r num' + (r && Math.abs(r.diff_share) >= 0.0005 ? ' neg' : '') + '">' + (r ? (Math.abs(r.diff_share) >= 0.0005 ? money(r.diff) + ' (' + spct(r.diff_share, 2) + ')' : 'ties') : '–') + '</td>' : '') + '</tr>';
+      }).join('') + '</table></div><p class="small mut">Each holding is placed from its own terms: its timeline and its maximum days to cash, taken as the worst case from the decision to sell until cash arrives (notice, dealing date and settlement). Nothing is added to it. Liquid means 60 days or fewer, as in the report.</p></section>';
+
+    var mx = 1;
+    h += '<section class="panel"><h2>Days to cash</h2><p class="sub small">Share of assets that could be in cash within each number of days. “With your terms” applies the gates, lock-ups and fees entered below; “under stress” also suspends the chosen share of quarterly and less frequent funds.</p><div class="scroll"><table><tr><th>Within</th><th class="r">Contractual</th><th class="r">With your terms</th><th class="r">Under stress</th><th style="width:40%"></th></tr>' +
+      A.ladder.map(function (x) {
+        var w = function (v, c, o) { return '<div style="height:6px;border-radius:3px;margin:2px 0;width:' + (Math.max(0, v || 0) / mx * 100).toFixed(1) + '%;background:var(--' + c + ');opacity:' + o + '"></div>'; };
+        return '<tr' + (x.days === lim.horizon ? ' style="font-weight:600"' : '') + '><td>' + x.days + (x.days === 1 ? ' day' : ' days') + '</td><td class="r num">' + pct(x.share) + '</td><td class="r num">' + pct(x.with_terms_share) + '</td><td class="r num ' + (x.days === lim.horizon ? (x.stressed_share >= lim.min_liquid ? 'pos' : 'neg') : '') + '">' + pct(x.stressed_share) + '</td><td>' + w(x.share, 'c1', 0.35) + w(x.with_terms_share, 'c1', 0.7) + w(x.stressed_share, 'c2', 1) + '</td></tr>';
+      }).join('') + '</table></div>' + A.not_captured.map(function (t) { return '<p class="small"><span class="chip w">not captured</span> ' + esc(t) + '</p>'; }).join('') + '</section>';
+
+    if (A.checks.length) h += '<section class="panel"><h2>Checks on this report</h2><ul class="checks">' + A.checks.map(function (c) { return '<li><span class="n">' + (c.level === 'error' ? '✕' : c.level === 'warn' ? '!' : 'i') + '</span><span><b>' + esc(c.name) + '</b> ' + esc(c.text) + '</span></li>'; }).join('') + '</ul></section>';
+
+    var BN = {}; L.buckets.forEach(function (b) { BN[b.key] = b.name; });
+    h += '<section class="panel"><h2>Holdings and terms</h2><p class="sub small">Gates, lock-ups and fees are only in the report’s comments, so the engine does not read them from the text. Enter them here to apply them; they are remembered on this device.</p><div class="scroll"><table><tr><th>Holding</th><th>Class</th><th class="r">Value</th><th class="r">Share</th><th>Bucket</th><th class="r">Max days</th><th>Timeline</th><th>Proceeds</th><th>Report label</th><th>Gate % per dealing date</th><th>Lock-up ends</th><th>Fee %</th><th>Comments</th></tr>' +
+      A.rows.map(function (r) {
+        var t = st.terms[r.name] || {}, can = ['maturity', 'permanent', 'cash', 'unknown'].indexOf(r.bucket) < 0;
+        var inp = function (key, type, v, w) { return can ? '<input type="' + type + '" data-lt="' + esc(r.name) + '" data-k="' + key + '" value="' + (v === undefined || v === null ? '' : v) + '" style="width:' + w + '"' + (type === 'number' ? ' min="0" max="100" step="1"' : '') + '>' : ''; };
+        var mism = r.label && r.kind !== r.label && (r.kind === 'liquid' || r.kind === 'illiquid');
+        return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.asset_class) + '</td><td class="r num">' + money(r.value) + '</td><td class="r num">' + pct(r.w) + '</td><td>' + (r.bucket === 'unknown' ? '<span class="chip b">terms missing</span>' : esc(BN[r.bucket])) + '</td><td class="r num">' + (r.no_redemption ? 'none' : r.max_days === null ? '–' : r.max_days) + '</td><td>' + esc(r.timeline) + '</td><td>' + esc(r.payment) + '</td><td>' + esc(r.label) + (mism ? ' <span class="chip w">differs</span>' : '') + '</td>' +
+          '<td>' + inp('gate', 'number', t.gate === undefined || t.gate === null ? '' : Math.round(t.gate * 100), '64px') + '</td><td>' + inp('lockup_end', 'date', t.lockup_end, '130px') + '</td><td>' + inp('fee', 'number', t.fee === undefined || t.fee === null ? '' : +(t.fee * 100).toFixed(2), '56px') + '</td><td class="small">' + esc(r.comments) + '</td></tr>';
+      }).join('') + '</table></div></section>';
+
+    if (n > 1) {
+      h += '<section class="panel"><h2>Month by month</h2><div class="scroll"><table><tr><th></th>' + L.profiles.map(function (a) { return '<th class="r">' + esc(a.as_of || a.file) + '</th>'; }).join('') + '</tr>' +
+        '<tr><td>Assets</td>' + L.profiles.map(function (a) { return '<td class="r num">' + money(a.aum) + '</td>'; }).join('') + '</tr>' +
+        L.buckets.filter(function (b) { return L.profiles.some(function (a) { return a.buckets.some(function (x) { return x.key === b.key && x.share; }); }); }).map(function (b) {
+          return '<tr><td>' + esc(b.name) + '</td>' + L.profiles.map(function (a) { var x = a.buckets.filter(function (y) { return y.key === b.key; })[0]; return '<td class="r num">' + pct(x ? x.share : null) + '</td>'; }).join('') + '</tr>';
+        }).join('') +
+        '<tr><td><b>In cash within ' + st.horizon + ' days</b></td>' + L.profiles.map(function (a) { return '<td class="r num ' + (a.limit.ok ? 'pos' : 'neg') + '"><b>' + pct(a.limit.available) + '</b></td>'; }).join('') + '</tr></table></div>';
+      var ch = (L.change || []).filter(function (c) { return c.moved || c.new || c.gone; });
+      if (ch.length) h += '<h3>What changed since the previous report</h3><ul class="checks">' + ch.map(function (c) { return '<li><span class="n">!</span><span><b>' + esc(c.name) + '</b> ' + (c.new ? 'is new.' : c.gone ? 'is no longer in the report.' : 'moved from “' + esc(BN[c.bucket_before]) + '” to “' + esc(BN[c.bucket_after]) + '”.') + '</span></li>'; }).join('') + '</ul>';
+      h += '</section>';
+    }
+    return h;
+  };
+
   PAGE.illiquid = function () {
     var R = S.R, st = S.settings, h = head('Illiquid assets', 'Funds valued by appraisal or by the manager (property, private equity, strategic holdings, many hedge funds) report smoothed or infrequent returns. Left alone, they look steadier and less linked to markets than they are, and the portfolio’s risk is understated.', false);
     h += '<section class="panel"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2 style="margin:0">Correction for smoothed returns</h2>' + seg('desm', st.desmooth ? 1 : 0, [[1, 'On'], [0, 'Off (as v0.4.2)']]) + '</div>' +
@@ -440,6 +525,7 @@
       '<b>VaR and ES</b><span>Losses over one month, shown as positive numbers. “Normal” assumes a bell curve; “from history” uses the actual worst months. Ranges come from resampling the history (a block bootstrap, fixed seed so results repeat).</span>' +
       '<b>Trust label</b><span>High, Medium or Low, from how many months are used, how much of the history is the funds’ own reported data, and how much of the portfolio has stale prices.</span>' +
       '<b>Illiquid funds</b><span>Smoothed monthly funds are desmoothed; quarterly funds are modelled from equity returns; yearly-valued funds use your assumed beta. See the Illiquid assets page, where the correction can be switched off.</span>' +
+      '<b>Liquidity</b><span>Read from the monthly liquidity report. Each holding is placed in a bucket from its own terms, and the totals are checked against the report’s own dashboard. Gates, lock-ups and fees apply only when you enter them.</span>' +
       '<b>Status</b><span>Test build. An independent check of the maths passed the arithmetic; its five main findings have been fixed and are awaiting re-review.</span>' +
       '</div></section>';
   };
@@ -453,6 +539,7 @@
           if (id === 'window') { S.settings.window = +v; saveSettings(); recompute(); }
           else if (id === 'conf') { S.settings.conf = +v; saveSettings(); recompute(); }
           else if (id === 'cmp') { S.cmp.period = v; runCompare(); }
+          else if (id === 'liq-rec') { S.settings.liqr.receivables = v === '1'; saveSettings(); runLiquidity(); }
           else if (id === 'desm') { S.settings.desmooth = v === '1'; saveSettings(); recompute(); }
         });
       });
@@ -474,6 +561,19 @@
       S.attr.policy = pol; engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(pol)]).then(function (x) { S.attrRes = x; render(); });
     });
     ['at-from', 'at-to'].forEach(function (id) { var e = $('#' + id); if (e) e.addEventListener('change', function () { engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(S.attrRes.policy)]).then(function (x) { S.attrRes = x; render(); }); }); });
+    var lm = $('#liq-month'); if (lm) lm.addEventListener('change', function () { S.liq.month = +lm.value; render(); });
+    var lh = $('#liq-h'); if (lh) lh.addEventListener('change', function () { S.settings.liqr.horizon = +lh.value; saveSettings(); runLiquidity(); });
+    var lmin = $('#liq-min'); if (lmin) lmin.addEventListener('change', function () { var v = +lmin.value; if (isFinite(v) && v >= 0 && v <= 100) { S.settings.liqr.min_liquid = v / 100; saveSettings(); runLiquidity(); } });
+    var ls = $('#liq-sus'); if (ls) { ls.addEventListener('input', function () { ls.nextElementSibling.textContent = ls.value + '%'; }); ls.addEventListener('change', function () { S.settings.liqr.suspend = +ls.value / 100; saveSettings(); runLiquidity(); }); }
+    var lsm = $('#liq-sample'); if (lsm) lsm.addEventListener('click', function () { fetch('sample-liquidity.json').then(function (r) { return r.json(); }).then(function (f) { S.liq.files = f; S.liq.month = null; runLiquidity(); }); });
+    var lc = $('#liq-clear'); if (lc) lc.addEventListener('click', function () { S.liq = { files: [], res: null, month: null }; render(); });
+    $$('input[data-lt]').forEach(function (c) { c.addEventListener('change', function () {
+      var n = c.getAttribute('data-lt'), k = c.getAttribute('data-k'), T = S.settings.liqr.terms, t = Object.assign({}, T[n] || {});
+      if (c.value === '') t[k] = null; else if (k === 'lockup_end') t[k] = c.value; else if (isFinite(+c.value)) t[k] = +c.value / 100;
+      var o = {}; Object.keys(T).forEach(function (x) { if (x !== n) o[x] = T[x]; });
+      if (t.gate || t.fee || t.lockup_end) o[n] = t;
+      S.settings.liqr.terms = o; saveSettings(); runLiquidity();
+    }); });
     var pick = $('#pick'), file = $('#file'), drop = $('#drop');
     if (pick) pick.addEventListener('click', function () { file.click(); });
     if (file) file.addEventListener('change', function () { readFiles(file.files); file.value = ''; });

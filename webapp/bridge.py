@@ -15,6 +15,7 @@ import re
 import numpy as np
 
 from riskcore import illiquid
+from riskcore import liquidity_profile as lp
 from riskcore.analyse import Settings, analyse
 from riskcore.attribution import brinson
 from riskcore.calendar import ym_add
@@ -26,6 +27,8 @@ from riskcore.smoothing import MIN_MONTHS as DESMOOTH_MIN
 from riskcore.smoothing import ar1, geltner, observed_frequency
 from riskcore.stress import SCENARIOS, apply_shocks, factor_roles, resolve_scenario, reverse_stress
 from riskcore.uncertainty import bootstrap_interval, vol_standard_error
+
+from .liquidity_reader import read_report
 
 STATE: dict = {}
 
@@ -408,6 +411,32 @@ def attribution(start: str, end: str, policy_json: str) -> str:
     P = STATE["P"]
     pol = json.loads(policy_json) if policy_json else None
     return _dump(_attribution(STATE["ds"], P["complete_months"], P["as_of"], start, end, pol))
+
+
+# ---------------------------------------------------------------- liquidity report
+def liquidity(files_json: str, settings_json: str) -> str:
+    """files: [{name, sheets: {sheet: rows}}]. Settings: min_liquid, horizon, receivables, suspend, terms.
+    Returns one analysed profile per month (oldest first) and the change between the last two."""
+    files = json.loads(files_json)
+    s = json.loads(settings_json or "{}")
+    terms = {}
+    for n, t in (s.get("terms") or {}).items():
+        terms[n] = lp.Terms(gate=_n(t.get("gate")), lockup_end=t.get("lockup_end") or None, fee=_n(t.get("fee")))
+    out, issues = [], []
+    for f in files:
+        try:
+            pr, iss = read_report(f["sheets"], f.get("name", ""), bool(s.get("receivables")))
+        except ValueError as e:
+            issues.append({"level": "error", "text": f"Could not read {f.get('name', '')} as a liquidity report: {e}."})
+            continue
+        issues += iss
+        a = lp.analyse(pr, float(s.get("min_liquid") or 0.75), int(s.get("horizon") or lp.LIQUID_MAX_DAYS), terms,
+                       float(s.get("suspend") or 0.0))
+        a["file"] = f.get("name", "")
+        out.append(a)
+    out.sort(key=lambda a: a["as_of"] or "")
+    return _dump({"profiles": out, "issues": issues, "change": lp.compare(out[-2], out[-1]) if len(out) > 1 else None,
+                  "buckets": [{"key": k, "name": n, "kind": kind} for k, n, kind in lp.BUCKETS]})
 
 
 # ---------------------------------------------------------------- JSON

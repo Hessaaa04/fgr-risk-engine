@@ -62,6 +62,7 @@ def fetch_pyodide(cache: Path) -> Path:
 def build(out: Path, csp: bool, artifact: bool = False) -> None:
     from synthetic import generate
     from synthetic.adapters import to_dataset, to_legacy
+    from synthetic.liquidity_workbook import sheet_rows, write_liquidity_workbook
     from synthetic.workbook_v042 import write_v042_workbook
 
     if out.exists():
@@ -84,8 +85,13 @@ def build(out: Path, csp: bool, artifact: bool = False) -> None:
     (out / "engine.json").write_text(json.dumps(src))
     p = generate()
     (out / "sample.json").write_text(json.dumps(to_legacy(to_dataset(p)), separators=(",", ":")))
+    write_liquidity_workbook(out / "sample-liquidity-report.xlsx")
+    liq = [{"name": "sample-liquidity-report.xlsx (made up)", "sheets": sheet_rows(out / "sample-liquidity-report.xlsx")}]
+    (out / "sample-liquidity.json").write_text(json.dumps(liq))
     if not artifact:
         write_v042_workbook(p, out / "sample-portfolio.xlsx")
+    else:
+        (out / "sample-liquidity-report.xlsx").unlink()
     cache = fetch_pyodide(ROOT / ".cache")
     for f in PINNED:  # archives get a .wasm suffix: some hosts refuse .zip and .whl (the bytes are unchanged)
         dest = {"python_stdlib.zip": "python_stdlib.zip.wasm", "numpy-2.0.2-cp312-cp312-pyodide_2024_0_wasm32.whl": "numpy.whl.wasm"}.get(f, f)
