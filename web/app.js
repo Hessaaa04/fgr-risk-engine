@@ -9,7 +9,7 @@
   var PAGES = [['overview', 'Overview'], ['data', 'Data'], ['risk', 'Risk'], ['benchmarks', 'Benchmarks'], ['stress', 'Stress & scenarios'],
     ['attribution', 'Attribution'], ['liquidity', 'Liquidity'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
   var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {},
-    src_kind: {},
+    src_kind: {}, aliases: {},
     liqr: { min_liquid: 0.9, horizon: 60, receivables: false, suspend: 0, terms: {} } };
   var S = {
     settings: JSON.parse(JSON.stringify(DEF)), source: null, loadMsgs: [], issues: [], meta: null, R: null, busy: false,
@@ -160,6 +160,16 @@
             var sh = {}; wb.sheetNames.forEach(function (n) { sh[n] = wb.sheet(n, 400); });
             liqf.push({ name: it.name, sheets: sh }); msgs.push(it.name + ': liquidity report (see the Liquidity page).'); return;
           }
+          var mgs = MG.sheetName(wb.sheetNames);
+          if (mgs) {
+            var inc = {}; wb.sheetNames.filter(function (n) { return /^7\.[12]\b/.test(n.trim()); }).forEach(function (n) { var x = MG.parseIncome(wb.sheet(n, 400)); Object.keys(x).forEach(function (k) { inc[k] = x[k]; }); });
+            var mp = MG.parse(wb.sheet(mgs, 600), it.name, mgs.trim(), inc);
+            mp.issues = mp.issues.map(function (i) { return { level: i.level, text: it.name + ': ' + i.text }; });
+            vals.push({ name: it.name, kind: S.settings.src_kind[it.name] || 'actual', pvs: [mp], mgmt: true }); did = true;
+            var mr = mp.months.filter(function (x) { return x.hasReturn; });
+            msgs.push(it.name + ': management accounts, ' + mp.holdings.length + ' investments, ' + ym(mr[0].ym) + ' to ' + ym(mr[mr.length - 1].ym) + ' (financial assets only: cash, deposits and properties are not read yet).');
+            return;
+          }
           var vsn = wb.sheetNames.filter(function (n) { return XL.findValuationSheets(wb).indexOf(n) >= 0 || /a\s*\+\s*r\s*$/i.test(n.trim()); }), pvs = [];
           vsn.forEach(function (sn) {
             var pv; try { pv = XL.parseValuations(wb.sheet(sn, 800), sn); } catch (e) { issues.push({ level: 'info', text: it.name + ' › ' + sn.trim() + ': skipped (' + e.message + ')' }); return; }
@@ -192,7 +202,25 @@
       combineAndLoad();
     });
   }
+  function matchNames() {
+    var others = []; S.src.files.forEach(function (f) { if (!f.mgmt) others = others.concat(f.pvs); });
+    S.src.match = {};
+    S.src.files.forEach(function (f) {
+      if (!f.mgmt) return;
+      f.pvs.forEach(function (mp) {
+        MG.rename(mp, {});
+        var auto = MG.matchByValue(mp, others), map = {};
+        mp.holdings.forEach(function (h) {
+          var a = S.settings.aliases[h.key], m = auto[h.key];
+          S.src.match[h.key] = { full: h.fullName, auto: m ? m.to : null, months: m ? m.months : 0, to: a !== undefined ? a : (m ? m.to : '') , how: a !== undefined ? 'yours' : (m ? 'value' : 'none') };
+          if (S.src.match[h.key].to) map[h.key] = S.src.match[h.key].to;
+        });
+        MG.rename(mp, map);
+      });
+    });
+  }
   function combineAndLoad() {
+    matchNames();
     var c = SRC.combine(S.src.files);
     S.src.prov = c;
     c.issues.forEach(function (i) { S.issues.push(i); });
@@ -296,6 +324,16 @@
           return '<tr><td>' + esc(f.name) + '</td><td>' + sel('sk' + i, f.kind, [['actual', 'Management accounts (actuals)'], ['estimate', 'Estimates']], 'data-srckind="' + esc(f.name) + '"') + '</td><td class="r num">' + (used.length ? used.length + ' · ' + ym(used[0]) + ' to ' + ym(used[used.length - 1]) : 'none (superseded)') + '</td></tr>';
         }).join('') + '</table></div>';
       if (P.gaps.length) h += '<div class="banner warn" style="margin-top:10px"><b>Missing months.</b> No file covers ' + P.gaps.map(gapText).join(', ') + '. Risk and performance skip them.</div>';
+      var MT = S.src.match || {}, mk = Object.keys(MT);
+      if (mk.length) {
+        var names = {}; S.src.files.forEach(function (f) { if (!f.mgmt) f.pvs.forEach(function (pv) { pv.holdings.forEach(function (h) { names[h.name] = 1; }); }); });
+        var opts = [['', 'Keep its own name (a separate holding)']].concat(Object.keys(names).sort().map(function (n) { return [n, n]; }));
+        h += '<h3>Matching the management accounts to your other files</h3><p class="sub small">The management accounts use their own short names. Each investment is matched to a holding in your other files when both show the same month-end value in at least two months, and no other investment matches it. Check the matches once; your choices are remembered on this device.</p><div class="scroll" style="max-height:360px"><table><tr><th>Investment in the management accounts</th><th>Same holding as</th><th>How</th></tr>' +
+          mk.sort(function (a, b) { return (MT[a].how === 'none') - (MT[b].how === 'none') || a.localeCompare(b); }).reverse().map(function (k, i) {
+            var x = MT[k];
+            return '<tr><td>' + esc(x.full) + ' <span class="mut small">' + esc(k) + '</span></td><td>' + sel('al' + i, x.to, opts, 'data-alias="' + esc(k) + '"') + '</td><td>' + (x.how === 'value' ? '<span class="chip">same value, ' + x.months + ' months</span>' : x.how === 'yours' ? '<span class="chip">your choice</span>' : '<span class="chip w">no match</span>') + '</td></tr>';
+          }).join('') + '</table></div>';
+      }
       var ms = Object.keys(P.months).sort().reverse(), rev = ms.filter(function (m) { return P.months[m].others.length; });
       h += '<h3>Where each month comes from</h3><p class="sub small">Total value of the holdings in the file used, and how the other files that cover the same month differ from it. ' + rev.length + ' of ' + ms.length + ' months appear in more than one file.</p><div class="scroll" style="max-height:420px"><table><tr><th>Month</th><th>Used</th><th class="r">Total</th><th>Other files for this month (difference from the one used)</th></tr>' +
         ms.map(function (m) {
@@ -607,6 +645,11 @@
       S.attr.policy = pol; engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(pol)]).then(function (x) { S.attrRes = x; render(); });
     });
     ['at-from', 'at-to'].forEach(function (id) { var e = $('#' + id); if (e) e.addEventListener('change', function () { engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(S.attrRes.policy)]).then(function (x) { S.attrRes = x; render(); }); }); });
+    $$('select[data-alias]').forEach(function (c) { c.addEventListener('change', function () {
+      S.settings.aliases[c.getAttribute('data-alias')] = c.value; saveSettings();
+      S.issues = S.issues.filter(function (i) { return !/holdings show an Excel error in|values but no monthly returns/.test(i.text); });
+      combineAndLoad();
+    }); });
     $$('select[data-srckind]').forEach(function (c) { c.addEventListener('change', function () {
       var n = c.getAttribute('data-srckind'); S.settings.src_kind[n] = c.value; saveSettings();
       S.src.files.forEach(function (f) { if (f.name === n) f.kind = c.value; });
