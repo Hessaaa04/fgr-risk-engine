@@ -91,3 +91,16 @@ def test_observed_frequency():
     assert observed_frequency({m: (0.03 if int(m[5:]) % 3 == 0 else 0.0) for m in ms}) == "quarterly"
     assert observed_frequency({m: (0.08 if m.endswith("-12") else 0.0) for m in ms}) == "annual"
     assert observed_frequency({m: 0.0 for m in ms}) == "unknown"
+
+
+def test_observed_frequency_blind_spots():
+    ms = [f"{y}-{m:02d}" for y in range(2016, 2026) for m in range(1, 13)]
+    # revalued Feb/May/Aug/Nov: any quarterly phase counts
+    assert observed_frequency({m: (0.03 if int(m[5:]) % 3 == 2 else 0.0) for m in ms}) == "quarterly"
+    # tiny monthly accruals between quarterly revaluations count as zero
+    assert observed_frequency({m: (0.03 if int(m[5:]) % 3 == 0 else 0.0002) for m in ms}) == "quarterly"
+
+
+def test_short_periods_not_annualised():
+    assert series_stats(np.array([0.01] * 11))["ann_return"] is None
+    assert series_stats(np.array([0.01] * 12))["ann_return"] == pytest.approx(1.01 ** 12 - 1)

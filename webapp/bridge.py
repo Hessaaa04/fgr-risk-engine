@@ -187,17 +187,20 @@ def comparison(names_json: str, start: str, end: str) -> str:
     P = STATE["P"]
     months = [m for m in P["complete_months"] if start <= m <= end]
     pr = {m: portfolio_return(ds, m) for m in months}
-    rows = []
-    for name in json.loads(names_json):
-        s = ds.find_series(name)
-        if s is None:
-            continue
-        c = compare(pr, s.ret, months)
-        rows.append({"name": s.name, "type": s.type, **_clean(c)})
+    chosen = [s for s in (ds.find_series(n) for n in json.loads(names_json)) if s is not None]
+    # one common period for every row: months where the portfolio and every chosen series have a return
+    common = [m for m in months if pr[m] is not None and all(m in s.ret for s in chosen)]
+    dropped = [s.name for s in chosen if len([m for m in months if m in s.ret]) < 6]
+    if dropped:  # a series that barely covers the period would shrink everyone's period; leave it out
+        chosen = [s for s in chosen if s.name not in dropped]
+        common = [m for m in months if pr[m] is not None and all(m in s.ret for s in chosen)]
+    months = common
+    rows = [{"name": s.name, "type": s.type, **_clean(compare(pr, s.ret, months))} for s in chosen]
+    rows += [{"name": n, "n": 0, "dropped": True} for n in dropped]
     port_ms = [m for m in months if pr[m] is not None]
     return _dump({"months": months, "port": series_stats(np.array([pr[m] for m in port_ms])) if port_ms else None,
                   "cum_port": cumulative(pr, months),
-                  "cum": {r["name"]: cumulative(ds.find_series(r["name"]).ret, months) for r in rows}, "rows": rows})
+                  "cum": {s.name: cumulative(s.ret, months) for s in chosen}, "rows": rows})
 
 
 def _factors(P):
@@ -287,7 +290,7 @@ def _illiquid(ds, P):
         if h["liquid"] and not re.search("altern|strateg|private|property|real estate|hedge", h["sleeve"] + " " + h["name"], re.I):
             continue
         hist = own_history(ds, _h(ds, h["name"]), P["as_of"])
-        ms = sorted(hist)[-120:]
+        ms = _last_run(sorted(hist))[-120:]  # consecutive months only: AR1 must not span gaps
         r = np.array([hist[m] for m in ms])
         freq = observed_frequency({m: hist[m] for m in ms})
         row = {"name": h["name"], "sleeve": h["sleeve"], "w": h["w"], "n": len(r), "freq": freq,
@@ -311,6 +314,14 @@ def _illiquid(ds, P):
             row["status"] = "too little history"
         rows.append(row)
     return rows
+
+
+def _last_run(ms: list[str]) -> list[str]:
+    """The latest unbroken run of consecutive months."""
+    out: list[str] = []
+    for m in ms:
+        out = out + [m] if out and ym_add(out[-1], 1) == m else [m]
+    return out
 
 
 def _attribution(ds, comp, as_of, start, end, policy):

@@ -27,14 +27,17 @@ def annualise(total: float, months: int) -> float | None:
 
 
 def series_stats(r: np.ndarray) -> dict:
-    """Return, volatility, drawdown and best/worst month of one monthly return series."""
+    """Return, volatility, drawdown and best/worst month of one monthly return series.
+
+    Periods shorter than 12 months are not annualised (GIPS practice): ann_return is None.
+    """
     r = np.asarray(r, float)
     n = len(r)
     tot = _compound(r)
     return {
         "n": n,
         "total": tot,
-        "ann_return": annualise(tot, n),
+        "ann_return": annualise(tot, n) if n >= 12 else None,
         "vol_a": float(r.std(ddof=1)) * math.sqrt(12) if n > 1 else None,
         "max_dd": max_drawdown(r) if n else None,
         "best": float(r.max()) if n else None,
@@ -48,7 +51,8 @@ def compare(port: dict[str, float | None], bench: dict[str, float], months: list
 
     Tracking error = annualised standard deviation of (portfolio - benchmark).
     Information ratio = annualised mean active return / tracking error.
-    Up/down capture = portfolio's average return in the benchmark's up (down) months as a share of the benchmark's.
+    Up/down capture = portfolio's compounded return over the benchmark's up (down) months as a share of the
+    benchmark's compounded return over the same months (the usual fact-sheet convention).
     """
     ms = [m for m in months if port.get(m) is not None and bench.get(m) is not None]
     if len(ms) < 6:
@@ -71,8 +75,8 @@ def compare(port: dict[str, float | None], bench: dict[str, float], months: list
         "corr": float(np.corrcoef(p, b)[0, 1]) if vb > 0 and p.std() > 0 else None,
         "ir": float(a.mean()) * 12 / te if te > 0 else None,
         "hit_rate": float((a > 0).mean()),
-        "up_capture": float(p[up].mean() / b[up].mean()) if up.sum() >= 3 else None,
-        "down_capture": float(p[dn].mean() / b[dn].mean()) if dn.sum() >= 3 else None,
+        "up_capture": _compound(p[up]) / _compound(b[up]) if up.sum() >= 3 else None,
+        "down_capture": _compound(p[dn]) / _compound(b[dn]) if dn.sum() >= 3 else None,
     }
     return out
 
