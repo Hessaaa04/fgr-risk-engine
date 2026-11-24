@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from statistics import NormalDist
 
 import numpy as np
-from scipy import stats
 
 from .estimation import EstimationInput, Lineage
 
+_N = NormalDist()
 STALE_ZERO_SHARE = 0.7  # a holding is 'stale' when >= 70% of its own months show exactly 0
 
 
@@ -47,8 +48,9 @@ def max_drawdown(r: np.ndarray) -> float:
 
 def parametric_var_es(sd: float, conf: float) -> tuple[float, float, float]:
     """(z, VaR, ES) for a zero-mean normal with standard deviation sd."""
-    z = float(stats.norm.ppf(conf))
-    return z, z * sd, sd * float(stats.norm.pdf(z)) / (1 - conf)
+    # Standard library normal (Wichura AS241, ~1e-15 accurate) so riskcore needs only numpy and runs in the browser.
+    z = _N.inv_cdf(conf)
+    return z, z * sd, sd * _N.pdf(z) / (1 - conf)
 
 
 def historical_var_es(r: np.ndarray, conf: float) -> tuple[float, float]:

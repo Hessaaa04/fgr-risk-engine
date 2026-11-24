@@ -48,3 +48,26 @@ def smooth(r: np.ndarray, phi: float) -> np.ndarray:
         prev = (1 - phi) * x + phi * prev if t else x
         out[t] = prev
     return out
+
+
+def observed_frequency(r: dict[str, float], zero_tol: float = 0.0005) -> str:
+    """Guess how often a holding is revalued from where its non-zero returns fall.
+
+    Returns of size below `zero_tol` (5bp) count as zero, so small monthly accruals between
+    revaluations do not hide a quarterly or annual pattern. 'annual' when at least 80% of
+    non-zero returns land in one calendar month; 'quarterly' when at least 80% land in one of the
+    three month-of-quarter classes (any phase: Mar/Jun/Sep/Dec or Feb/May/Aug/Nov ...);
+    otherwise 'monthly'. Needs 8+ non-zero months; else 'unknown'. A label only: an
+    instrument's recorded valuation frequency overrides it, and 'unknown' never clears a stale flag.
+    """
+    nz = [m for m, x in r.items() if x is not None and abs(x) >= zero_tol]
+    if len(nz) < 8:
+        return "unknown"
+    months = [int(m[5:7]) for m in nz]
+    top = max(months.count(k) for k in range(1, 13))
+    if top / len(nz) >= 0.8 and len(nz) <= len(r) / 6:
+        return "annual"
+    q = max(sum(1 for k in months if k % 3 == c) for c in range(3))
+    if q / len(nz) >= 0.8 and len(nz) <= len(r) / 2:
+        return "quarterly"
+    return "monthly"
