@@ -19,6 +19,12 @@ def _compound(x) -> float:
     return float(np.prod(1 + np.asarray(x, float)) - 1)
 
 
+def _gmean(r) -> float:
+    """Geometric-mean monthly return."""
+    r = np.asarray(r, float)
+    return float(np.prod(1 + r) ** (1 / len(r)) - 1)
+
+
 def annualise(total: float, months: int) -> float | None:
     """Geometric annualised return from a compounded total over `months` months."""
     if months <= 0 or total <= -1:
@@ -51,8 +57,8 @@ def compare(port: dict[str, float | None], bench: dict[str, float], months: list
 
     Tracking error = annualised standard deviation of (portfolio - benchmark).
     Information ratio = annualised mean active return / tracking error.
-    Up/down capture = portfolio's compounded return over the benchmark's up (down) months as a share of the
-    benchmark's compounded return over the same months (the usual fact-sheet convention).
+    Up/down capture (Morningstar convention) = portfolio's geometric-mean monthly return over the benchmark's
+    up (down) months divided by the benchmark's geometric-mean monthly return over the same months.
     """
     ms = [m for m in months if port.get(m) is not None and bench.get(m) is not None]
     if len(ms) < 6:
@@ -75,8 +81,8 @@ def compare(port: dict[str, float | None], bench: dict[str, float], months: list
         "corr": float(np.corrcoef(p, b)[0, 1]) if vb > 0 and p.std() > 0 else None,
         "ir": float(a.mean()) * 12 / te if te > 0 else None,
         "hit_rate": float((a > 0).mean()),
-        "up_capture": _compound(p[up]) / _compound(b[up]) if up.sum() >= 3 else None,
-        "down_capture": _compound(p[dn]) / _compound(b[dn]) if dn.sum() >= 3 else None,
+        "up_capture": _gmean(p[up]) / _gmean(b[up]) if up.sum() >= 3 else None,
+        "down_capture": _gmean(p[dn]) / _gmean(b[dn]) if dn.sum() >= 3 else None,
     }
     return out
 

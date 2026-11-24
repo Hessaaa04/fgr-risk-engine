@@ -104,3 +104,14 @@ def test_observed_frequency_blind_spots():
 def test_short_periods_not_annualised():
     assert series_stats(np.array([0.01] * 11))["ann_return"] is None
     assert series_stats(np.array([0.01] * 12))["ann_return"] == pytest.approx(1.01 ** 12 - 1)
+
+
+def test_capture_geometric_mean_by_hand():
+    months = [f"2025-{m:02d}" for m in range(1, 7)]
+    b = [0.02, -0.01, 0.03, -0.02, 0.01, -0.03]
+    p = [0.01, -0.005, 0.02, -0.01, 0.01, -0.02]
+    c = compare(dict(zip(months, p)), dict(zip(months, b)), months)
+    up = ((1.01 * 1.02 * 1.01) ** (1 / 3) - 1) / ((1.02 * 1.03 * 1.01) ** (1 / 3) - 1)
+    dn = ((0.995 * 0.99 * 0.98) ** (1 / 3) - 1) / ((0.99 * 0.98 * 0.97) ** (1 / 3) - 1)
+    assert c["up_capture"] == pytest.approx(up, abs=1e-12)
+    assert c["down_capture"] == pytest.approx(dn, abs=1e-12)
