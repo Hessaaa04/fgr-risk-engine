@@ -85,7 +85,7 @@ def test_v05_brinson_policy_weight_without_index(port):
     assert out["alloc"].sum() + out["sel"].sum() == pytest.approx(out["excess"])
 
 
-@pytest.mark.xfail(strict=True, reason="V-17: two factors matched to one scenario role by name pattern both take the same shock")
+# V-17: fixed in 8e48d2f, kept as a regression test (validator re-review 24 Nov 2026)
 def test_v17_one_factor_per_role_unless_mapped():
     from riskcore.data import Series
     from riskcore.stress import factor_roles
@@ -94,9 +94,9 @@ def test_v17_one_factor_per_role_unless_mapped():
     assert roles.count("globalequities") <= 1  # today both are 'globalequities', so EM is shocked -20% in 'Equities fall 20%'
 
 
-@pytest.mark.xfail(strict=True, reason="V-18: quarterly factor model's residual comes from still-smoothed quarterly returns, so it is too small")
+@pytest.mark.xfail(strict=True, reason="V-18 (Low, accepted limitation): 40 quarters cannot identify within-quarter smoothing; 16.8% vs 19.9% true after the 0.5 floor")
 def test_v18_private_equity_vol_within_15pct_of_true(port, run36):
     tr = port.valuations.pivot(index="month", columns="instrument", values="true_return")
     true_vol = float(tr.loc[run36["months"], PE].std(ddof=1) * math.sqrt(12))
     pe = next(h for h in run36["risk"].holdings if h["name"] == PE)
-    assert pe["vol_a"] >= 0.85 * true_vol  # today: 15.7% modelled vs 19.9% true
+    assert pe["vol_a"] >= 0.85 * true_vol  # after 8e48d2f: 16.8% modelled vs 19.9% true (84.5%); do not tune the floor to pass this

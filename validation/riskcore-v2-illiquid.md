@@ -30,3 +30,14 @@ are changed, and each change is listed in `adjustments` with its lineage.
   flagged "needs an assumed beta or proxy". This is the right behaviour; Hessa needs to supply
   the assumed betas or proxies (open question in the validation report).
 - Historical VaR excludes the added idiosyncratic variance: keep the label beside it.
+
+## Follow-up re-review (commit 8e48d2f)
+- **V-17 closed.** Colliding pattern matches lose the role unless set in `factor_map`; an exact role
+  name keeps it; affected scenarios report an error. Checked with equities and oil collisions.
+- **V-18 accepted as a Low limitation.** The variance-ratio and autocorrelation formulas for monthly
+  AR(1) smoothing summed to quarters were checked against 200,000 simulated quarters at phi 0.3, 0.5
+  and 0.7 (match to 3 decimals; the inversion recovers phi within 0.004). Modelled PE volatility is
+  16.8% vs 19.9% true. The remaining gap comes from the beta (1.10 vs 1.20) and the credit exposure
+  left out by the parsimony rule, which stays: 40 quarters cannot support a second factor. The 0.5
+  floor (D25) is an assumption within the published 0.4 to 0.7 range and should be confirmed by
+  Hessa. The test stays as `xfail` to track the gap and must not be passed by tuning the floor.
