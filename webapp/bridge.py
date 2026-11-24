@@ -14,6 +14,7 @@ import re
 
 import numpy as np
 
+from riskcore import illiquid
 from riskcore.analyse import Settings, analyse
 from riskcore.attribution import brinson
 from riskcore.calendar import ym_add
@@ -23,7 +24,7 @@ from riskcore.performance import compare, cumulative, rolling_vol, series_stats
 from riskcore.risk import analyse_risk
 from riskcore.smoothing import MIN_MONTHS as DESMOOTH_MIN
 from riskcore.smoothing import ar1, geltner, observed_frequency
-from riskcore.stress import SCENARIOS, apply_shocks, resolve_scenario, reverse_stress
+from riskcore.stress import SCENARIOS, apply_shocks, factor_roles, resolve_scenario, reverse_stress
 from riskcore.uncertainty import bootstrap_interval, vol_standard_error
 
 STATE: dict = {}
@@ -90,7 +91,8 @@ def run(settings_json: str) -> str:
     st = Settings(
         today=STATE["today"], as_of=s.get("as_of"), window=int(s.get("window") or 36), conf=float(s.get("conf") or 0.95),
         risk_benchmark=s.get("risk_benchmark") or d["risk"], perf_benchmark=s.get("perf_benchmark") or d["perf"],
-        proxies=s.get("proxies") or {}, liquidity_overrides=s.get("liquidity") or {}, liq_target=float(s.get("liq_target") or 0.9),
+        desmooth=s.get("desmooth", True), assumed_betas=s.get("assumed_betas") or {},
+        proxies=s.get("proxies") or {}, factor_map=s.get("factor_map") or {}, liquidity_overrides=s.get("liquidity") or {}, liq_target=float(s.get("liq_target") or 0.9),
         reverse_loss=float(s.get("reverse_loss") or 0.10), propagate=s.get("propagate", True),
     )
     # liquidity overrides change Holding objects; start from the loaded flags each run
@@ -122,6 +124,8 @@ def run(settings_json: str) -> str:
         "rolling": _rolling(ds, P, st),
         "performance": perf,
         "factors": _factors(P),
+        "factor_roles": P.get("factor_roles"),
+        "adjustments": P.get("adjustments"),
         "stress": _stress_list(P),
         "reverse": _clean(P["reverse"]),
         "illiquid": _illiquid(ds, P),
@@ -139,9 +143,14 @@ def _label_reasons(T, lin, stale):
     return [
         {"ok": T >= 60, "text": f"{T} months of history used (High needs 60 or more; under 36 is Low)."},
         {"ok": own >= 0.95, "text": f"{own:.1%} of the return history is the holdings' own reported data (High needs 95%; under 60% is Low)."},
-        {"ok": lin.get("proxy", 0) == 0, "text": f"{lin.get('proxy', 0):.1%} comes from stand-in (proxy) indices (High needs none; over 50% is Low)."},
+        {"ok": _modelled(lin) == 0,
+         "text": f"{_modelled(lin):.1%} is estimated: proxies, desmoothing or factor models for illiquid funds (High needs none; over 50% is Low)."},
         {"ok": stale <= 0.05, "text": f"{stale:.1%} of the portfolio has stale prices, which hide risk (High needs 5% or less; over 25% is Low)."},
     ]
+
+
+def _modelled(lin):
+    return lin.get("proxy", 0) + lin.get("desmoothed", 0) + lin.get("factor_model", 0)
 
 
 def _rolling(ds, P, st):
@@ -158,6 +167,9 @@ def _rolling(ds, P, st):
             inp = build_estimation_input(ds, m, st.window, st.min_coverage, st.proxies)
         except ValueError:
             continue
+        if st.desmooth:
+            factors = ds.series_of("factor")
+            illiquid.apply(ds, inp, factors, factor_roles(factors, st.factor_map), st.assumed_betas)
         if len(inp.months) < 12:
             continue
         R = analyse_risk(inp, st.conf)
@@ -232,6 +244,11 @@ def _stress_list(P):
     out = []
     for s in P["stress"]:
         sc = names.get(s["id"], {})
+        if s["port"] is None:
+            out.append({"id": s["id"], "name": sc.get("name", s["id"]), "kind": sc.get("kind"), "from": sc.get("from"), "to": sc.get("to"),
+                        "src": s["src"], "error": s.get("error"), "port": None, "bench": None, "actual": None, "by_sleeve": [], "loss_value": None,
+                        "shocks": s["shocks"]})
+            continue
         res = _apply(P, np.asarray(s["shocks"]))
         out.append({"id": s["id"], "name": sc.get("name", s["id"]), "kind": sc.get("kind"), "from": sc.get("from"), "to": sc.get("to"),
                     "src": s["src"], "shocks": s["shocks"], "port": s["port"], "bench": s["bench"], "actual": s["actual"],
@@ -258,9 +275,11 @@ def scenario(shocks_json: str, propagate: bool) -> str:
     if F is None:
         return _dump({"error": "No market factor history is loaded, so scenarios cannot be run."})
     given = json.loads(shocks_json)
-    sc = {"id": "custom", "kind": "custom", "shocks": {norm(k): v for k, v in given.items() if v is not None}}
     factors = STATE["ds"].series_of("factor")
-    r = resolve_scenario(sc, factors, F["SF"], bool(propagate))
+    roles = factor_roles(factors, STATE["st"].factor_map)
+    key = {f.name: (r or norm(f.name)) for f, r in zip(factors, roles)}
+    sc = {"id": "custom", "kind": "custom", "shocks": {key.get(k, norm(k)): v for k, v in given.items() if v is not None}}
+    r = resolve_scenario(sc, factors, F["SF"], bool(propagate), roles)
     res = _apply(P, r["shocks"])
     return _dump({"shocks": r["shocks"], "specified": r["specified"], **res, "loss_value": res["port"] * P["aum"],
                   "sigma": _mahalanobis(r["shocks"], F["SF"])})
@@ -357,21 +376,9 @@ def _attribution(ds, comp, as_of, start, end, policy):
     if wsum <= 0:
         out["reason"] = "Set the benchmark weights to run the attribution."
         return out
-    pol = {}
-    missing = []
-    for p in policy:
-        ser = ds.find_series(p.get("series")) if p.get("series") else None
-        w = float(p.get("weight") or 0)
-        if w > 0:
-            if ser is None:
-                missing.append(f"{p['sleeve']}: no benchmark index chosen")
-            else:
-                missing += [f"{ser.name} has no return for {m}" for m in months if m not in ser.ret]
-        pol[p["sleeve"]] = (w, ser)
-    if missing:
-        out["reason"] = "The benchmark needs more data: " + "; ".join(missing[:3]) + (f" (and {len(missing) - 3} more)" if len(missing) > 3 else "") + "."
-        return out
+    pol = {p["sleeve"]: (float(p.get("weight") or 0), ds.find_series(p.get("series")) if p.get("series") else None) for p in policy}
     B = brinson(ds, months, pol)
+    out["own_return_classes"] = B["own_return_classes"]
     out.update(ok=True, Rp=B["Rp"], Rb=B["Rb"], excess=B["excess"], alloc_total=float(np.sum(B["alloc"])), sel_total=float(np.sum(B["sel"])),
                sleeves=[{"name": s, "alloc": float(B["alloc"][i]), "sel": float(B["sel"][i]), "total": float(B["alloc"][i] + B["sel"][i]),
                          "wb": pol.get(s, (0, None))[0] / wsum, "series": pol[s][1].name if s in pol and pol[s][1] else ""}

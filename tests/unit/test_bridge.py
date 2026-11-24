@@ -55,12 +55,12 @@ def test_scenario_and_reverse(loaded):
     assert r["loss"] == 0.1
 
 
-def test_attribution_missing_index_is_reported_not_crash(loaded):
+def test_attribution_missing_index_uses_own_return_and_says_so(loaded):
     _, meta = loaded
     bridge.run(json.dumps({}))
     pol = [{"sleeve": s, "weight": 50 if s in ("Equities", "Alternative") else 0, "series": "Global equities" if s == "Equities" else ""} for s in meta["sleeves"]]
     a = json.loads(bridge.attribution("2026-01", "2026-10", json.dumps(pol)))
-    assert not a["ok"] and "no benchmark index" in a["reason"]
+    assert a["ok"] and a["own_return_classes"] == ["Alternative"]  # V-05: the class's own return, flagged
     assert a["contrib"]  # contributions still shown
 
 

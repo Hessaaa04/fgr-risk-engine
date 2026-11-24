@@ -12,7 +12,7 @@ dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6"]
 packages = ["riskcore", "synthetic"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "validation"]
 
 [tool.ruff]
 line-length = 170

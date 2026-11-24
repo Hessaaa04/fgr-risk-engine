@@ -66,7 +66,7 @@ def test_matches_v042(case, portfolio, tmp_path):
     st = Settings(today=TODAY, as_of=extra.get("asOf"), window=extra.get("window", 60), conf=extra.get("conf", 0.95),
                   risk_benchmark=RISK_BM, perf_benchmark=PERF_BM, proxies=extra.get("proxy", {}),
                   liquidity_overrides=extra.get("liq", {}), reverse_loss=extra.get("reverseLoss", 0.10),
-                  propagate=extra.get("propagate", True), custom_shocks=extra.get("custom", {}))
+                  propagate=extra.get("propagate", True), custom_shocks=extra.get("custom", {}), desmooth=False)
     P = analyse(to_dataset(portfolio), st)
     R = P["risk"]
 
@@ -85,7 +85,7 @@ def test_matches_v042(case, portfolio, tmp_path):
     close(R.max_dd, A["risk"]["maxDD"], 1e-12, "max drawdown")
     for key, js in (("rc", "rc"), ("mvar", "mvar"), ("cvar", "cvar"), ("ivar", "ivar"), ("vol_a", "volA")):
         close([h[key] for h in R.holdings], [h[js] for h in A["holdings"]], 1e-8, f"holding {key}")
-    assert [h["stale"] for h in R.holdings] == [h["stale"] for h in A["holdings"]]
+    assert [h["stale_v042"] for h in R.holdings] == [h["stale"] for h in A["holdings"]]  # v2 widens 'stale' (V-02, D21)
     assert [h["no_data"] for h in R.holdings] == [h["noData"] for h in A["holdings"]]
     close([s["w"] for s in R.sleeves], [s["w"] for s in A["sleeves"]], 1e-12, "sleeve weights")
     close([s["rc"] for s in R.sleeves], [s["rc"] for s in A["sleeves"]], 1e-10, "sleeve risk share")

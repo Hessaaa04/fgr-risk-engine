@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import illiquid
 from .active import active_risk
 from .calendar import ym_range
 from .data import Dataset, norm
 from .estimation import Lineage, build_estimation_input, complete_months, lineage_share, portfolio_return
 from .factors import factor_exposures, pca
 from .risk import analyse_risk, liquidity
-from .stress import SCENARIOS, apply_shocks, resolve_scenario, reverse_stress
+from .stress import SCENARIOS, apply_shocks, factor_roles, resolve_scenario, reverse_stress
 from .uncertainty import confidence_label
 
 
@@ -29,6 +30,9 @@ class Settings:
     reverse_loss: float = 0.10
     propagate: bool = True
     custom_shocks: dict[str, float] = field(default_factory=dict)
+    factor_map: dict[str, str] = field(default_factory=dict)  # factor name -> scenario role (V-04)
+    desmooth: bool = True  # correct smoothed and quarterly-valued holdings (V-01, V-03); False reproduces v0.4.2
+    assumed_betas: dict[str, float] = field(default_factory=dict)  # analyst equity beta for holdings valued yearly
 
 
 def _compound(xs) -> float:
@@ -47,6 +51,10 @@ def analyse(ds: Dataset, st: Settings) -> dict:
         if h.name in st.liquidity_overrides:
             h.liquid = st.liquidity_overrides[h.name]
     inp = build_estimation_input(ds, as_of, st.window, st.min_coverage, st.proxies)
+    factors = ds.series_of("factor")
+    roles = factor_roles(factors, st.factor_map)
+    if st.desmooth:
+        illiquid.apply(ds, inp, factors, roles, st.assumed_betas)
     if len(inp.months) < 3:
         raise ValueError(f"Fewer than three months of usable returns up to {as_of}.")
     R = analyse_risk(inp, st.conf)
@@ -74,7 +82,9 @@ def analyse(ds: Dataset, st: Settings) -> dict:
     out["lineage"] = shares
     stale_w = sum(h["w"] for h in R.holdings if h["stale"])
     out["stale_weight"] = stale_w
-    out["confidence_label"] = confidence_label(len(inp.months), own, shares[Lineage.PROXY.value], stale_w)
+    modelled = shares[Lineage.PROXY.value] + shares[Lineage.DESMOOTHED.value] + shares[Lineage.FACTOR_MODEL.value]
+    out["confidence_label"] = confidence_label(len(inp.months), own, modelled, stale_w)
+    out["adjustments"] = inp.adjustments
 
     # realised year to date
     yr = as_of[:4]
@@ -82,7 +92,6 @@ def analyse(ds: Dataset, st: Settings) -> dict:
     rs = [portfolio_return(ds, m) for m in ms]
     out["ytd"] = None if any(r is None for r in rs) else _compound(rs)
 
-    factors = ds.series_of("factor")
     F = factor_exposures(inp.X, inp.w, R.rp, inp.months, factors, risk_bm, inp.sleeve_idx, R.sleeve_w)
     out["factors"] = F
     out["pca"] = pca(R.C, inp.w)
@@ -92,9 +101,14 @@ def analyse(ds: Dataset, st: Settings) -> dict:
         scen = list(SCENARIOS)
         if any(v is not None for v in st.custom_shocks.values()):
             scen.append({"id": "custom", "name": "Custom scenario", "kind": "custom", "shocks": st.custom_shocks})
+        out["factor_roles"] = dict(zip([f.name for f in factors], roles))
         res = []
         for sc in scen:
-            r = resolve_scenario(sc, factors, F["SF"], st.propagate)
+            r = resolve_scenario(sc, factors, F["SF"], st.propagate, roles)
+            if r["unmapped"]:  # never show a silent 0% (V-04)
+                res.append({"id": sc["id"], "src": r["src"], "shocks": r["shocks"], "port": None, "bench": None, "actual": None,
+                            "error": "No loaded factor is mapped to: " + ", ".join(r["unmapped"]) + "."})
+                continue
             a = apply_shocks(F["B"], inp.w, inp.sleeve_idx, len(inp.sleeves), r["shocks"], F["bench"])
             actual = None
             if sc["kind"] == "historical":
