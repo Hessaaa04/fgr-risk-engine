@@ -9,12 +9,13 @@
   var PAGES = [['overview', 'Overview'], ['data', 'Data'], ['risk', 'Risk'], ['benchmarks', 'Benchmarks'], ['stress', 'Stress & scenarios'],
     ['attribution', 'Attribution'], ['liquidity', 'Liquidity'], ['illiquid', 'Illiquid assets'], ['factors', 'Factors'], ['about', 'How it works']];
   var DEF = { window: 36, conf: 0.95, as_of: null, risk_benchmark: null, perf_benchmark: null, liquidity: {}, proxies: {}, liq_target: 0.9, reverse_loss: 0.10, propagate: true, desmooth: true, assumed_betas: {}, factor_map: {},
+    src_kind: {},
     liqr: { min_liquid: 0.9, horizon: 60, receivables: false, suspend: 0, terms: {} } };
   var S = {
     settings: JSON.parse(JSON.stringify(DEF)), source: null, loadMsgs: [], issues: [], meta: null, R: null, busy: false,
     cmp: { names: null, period: '36', from: null, to: null }, cmpRes: null,
     scen: { shocks: {}, propagate: true, base: '' }, scenRes: null, rev: null, revLoss: 0.10,
-    attr: { from: null, to: null, policy: null }, attrRes: null, liq: { files: [], res: null, month: null }, stressSel: null, hsort: { k: 'w', d: -1 }
+    attr: { from: null, to: null, policy: null }, attrRes: null, liq: { files: [], res: null, month: null }, src: { files: [], hist: [], prov: null, label: '' }, stressSel: null, hsort: { k: 'w', d: -1 }
   };
   try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) Object.keys(DEF).forEach(function (k) { if (saved[k] !== undefined && k !== 'as_of') S.settings[k] = k === 'liqr' ? Object.assign({}, DEF.liqr, saved[k]) : saved[k]; }); } catch (e) { /* storage unavailable */ }
   function saveSettings() { try { localStorage.setItem(KEY, JSON.stringify(S.settings)); } catch (e) { /* ignore */ } }
@@ -159,12 +160,18 @@
             var sh = {}; wb.sheetNames.forEach(function (n) { sh[n] = wb.sheet(n, 400); });
             liqf.push({ name: it.name, sheets: sh }); msgs.push(it.name + ': liquidity report (see the Liquidity page).'); return;
           }
-          XL.findValuationSheets(wb).forEach(function (sn) {
-            var pv = XL.parseValuations(wb.sheet(sn, 800), sn); pv.file = it.name; vals.push(pv); did = true;
-            var m = pv.months.filter(function (x) { return x.hasReturn; });
-            msgs.push(it.name + ' › ' + sn + ': ' + pv.holdings.length + ' holdings, ' + (m.length ? ym(m[0].ym) + ' to ' + ym(m[m.length - 1].ym) : 'no months') + '.');
-            pv.issues.forEach(function (i) { issues.push({ level: i.level, text: it.name + ': ' + i.text }); });
+          var vsn = wb.sheetNames.filter(function (n) { return XL.findValuationSheets(wb).indexOf(n) >= 0 || /a\s*\+\s*r\s*$/i.test(n.trim()); }), pvs = [];
+          vsn.forEach(function (sn) {
+            var pv; try { pv = XL.parseValuations(wb.sheet(sn, 800), sn); } catch (e) { issues.push({ level: 'info', text: it.name + ' › ' + sn.trim() + ': skipped (' + e.message + ')' }); return; }
+            if (!pv.months.length) return;
+            pv.file = it.name; pvs.push(pv); did = true; pv.issues = pv.issues.map(function (i) { return { level: i.level, text: it.name + ': ' + i.text }; });  // its warnings are reported only if it supplies a month (sources.js)
           });
+          if (pvs.length) {
+            var mm = []; pvs.forEach(function (pv) { pv.months.forEach(function (x) { if (x.hasReturn) mm.push(x.ym); }); }); mm.sort();
+            var kind = S.settings.src_kind[it.name] || SRC.kindFromName(it.name);
+            vals.push({ name: it.name, kind: kind, pvs: pvs });
+            msgs.push(it.name + ': ' + (kind === 'actual' ? 'management accounts (actuals)' : 'estimates') + ', ' + (mm.length ? ym(mm[0]) + ' to ' + ym(mm[mm.length - 1]) : 'no monthly returns') + '.');
+          }
           if (wb.sheetNames.some(function (n) { return /^(market\s+)?(prices?|manual)/i.test(n.trim()); })) {
             var h = XL.parseHistory(wb); did = true;
             if (h.series.length) { hist = hist.concat(h.series); msgs.push(it.name + ': ' + h.series.length + ' market series.'); }
@@ -181,17 +188,32 @@
         if (!vals.length) { if (page() !== 'liquidity') location.hash = 'liquidity'; else render(); return; }
       }
       if (!vals.length) { S.error = 'No valuation sheet was found in the files chosen, so nothing was loaded. See the messages below.'; render(); return; }
-      var ds = RE.buildDataset(vals, hist);
-      ds.issues.forEach(function (i) { if (issues.indexOf(i) < 0) issues.push(i); });
-      loadDataset(ds, items.map(function (i) { return i.name; }).join(', '));
+      S.src = { files: vals, hist: hist, prov: null, label: items.map(function (i) { return i.name; }).join(', ') };
+      combineAndLoad();
     });
   }
+  function combineAndLoad() {
+    var c = SRC.combine(S.src.files);
+    S.src.prov = c;
+    c.issues.forEach(function (i) { S.issues.push(i); });
+    var ds = RE.buildDataset(c.vals, S.src.hist);
+    ds.issues.forEach(function (i) { if (S.issues.indexOf(i) < 0) S.issues.push(i); });
+    return loadDataset(ds, S.src.label);
+  }
+  function srcSummary(months) { // how much of a list of months comes from estimates, and gaps inside it
+    var P = S.src.prov; if (!P || !months || !months.length) return null;
+    var est = months.filter(function (m) { return P.months[m] && P.months[m].kind === 'estimate'; }).length;
+    var gaps = P.gaps.filter(function (g) { return g[0] > months[0] && g[1] < months[months.length - 1]; });
+    return { est: est, n: months.length, gaps: gaps };
+  }
+  function gapText(g) { return g[0] === g[1] ? ym(g[0]) : ym(g[0]) + ' to ' + ym(g[1]); }
   function runLiquidity() {
     if (!S.liq.files.length) { S.liq.res = null; return Promise.resolve(); }
     return engine.call('liquidity', [JSON.stringify(S.liq.files), JSON.stringify(S.settings.liqr)]).then(function (x) { S.liq.res = x; render(); })
       .catch(function (e) { S.error = e.message; render(); });
   }
   function loadSample() {
+    S.src = { files: [], hist: [], prov: null, label: '' };
     fetch('sample.json').then(function (r) { return r.json(); }).then(function (ds) { S.loadMsgs = ['Sample portfolio: 27 made-up funds, Aug 2015 to Oct 2026.']; S.issues = []; loadDataset(ds, 'sample portfolio (made-up data)'); });
   }
 
@@ -223,10 +245,17 @@
 
   // ------------------------------------------------------------ pages
   var PAGE = {};
+  function srcChecks(R) {
+    var x = srcSummary(R.months); if (!x) return '';
+    var li = function (ok, t) { return '<li><span class="' + (ok ? 'y' : 'n') + '">' + (ok ? '✓' : '!') + '</span><span>' + t + '</span></li>'; };
+    var h = li(x.est === 0, x.est === 0 ? 'Every month used comes from the management accounts (actuals).' : x.est + ' of the ' + x.n + ' months used come from estimates, which later files and the management accounts can revise (see the Data page). This is not yet part of the label.');
+    if (x.gaps.length) h += li(false, 'The window jumps over months no file covers (' + x.gaps.map(gapText).join(', ') + '), so it reaches further back than ' + R.window + ' calendar months.');
+    return h;
+  }
   function trust(R) {
     var q = R.quality;
     return '<section class="panel"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2 style="margin:0">How far to trust these numbers</h2><span class="pill ' + q.label + '">' + q.label + '</span></div>' +
-      '<ul class="checks">' + q.reasons.map(function (r) { return '<li><span class="' + (r.ok ? 'y' : 'n') + '">' + (r.ok ? '✓' : '!') + '</span><span>' + esc(r.text) + '</span></li>'; }).join('') + '</ul></section>';
+      '<ul class="checks">' + q.reasons.map(function (r) { return '<li><span class="' + (r.ok ? 'y' : 'n') + '">' + (r.ok ? '✓' : '!') + '</span><span>' + esc(r.text) + '</span></li>'; }).join('') + srcChecks(R) + '</ul></section>';
   }
   PAGE.overview = function () {
     var R = S.R, H = R.headline, ar = R.active_risk || {}, c = Math.round(R.conf * 100) + '%';
@@ -257,6 +286,23 @@
     if (S.loadMsgs.length || S.issues.length) {
       h += '<section class="panel"><h2>What was read</h2><ul class="checks">' + S.loadMsgs.map(function (m) { return '<li><span class="y">✓</span><span>' + esc(m) + '</span></li>'; }).join('') +
         S.issues.map(function (i) { return '<li><span class="n">' + (i.level === 'error' ? '✕' : '!') + '</span><span>' + esc(i.text) + '</span></li>'; }).join('') + '</ul></section>';
+    }
+    var P = S.src.prov;
+    if (P && S.src.files.length) {
+      h += '<section class="panel"><h2>Sources</h2><p class="sub small">Management accounts (actuals) are more accurate than the monthly estimates, and later estimate files revise earlier months. For each month the engine uses one file: one that reports the month’s return first, then actuals over estimates, then the newest file. Change a file’s type if its name does not say.</p>' +
+        '<div class="scroll"><table><tr><th>File</th><th>Type</th><th class="r">Months used</th></tr>' +
+        S.src.files.map(function (f, i) {
+          var used = Object.keys(P.months).filter(function (m) { return P.months[m].file === f.name; });
+          return '<tr><td>' + esc(f.name) + '</td><td>' + sel('sk' + i, f.kind, [['actual', 'Management accounts (actuals)'], ['estimate', 'Estimates']], 'data-srckind="' + esc(f.name) + '"') + '</td><td class="r num">' + (used.length ? used.length + ' · ' + ym(used[0]) + ' to ' + ym(used[used.length - 1]) : 'none (superseded)') + '</td></tr>';
+        }).join('') + '</table></div>';
+      if (P.gaps.length) h += '<div class="banner warn" style="margin-top:10px"><b>Missing months.</b> No file covers ' + P.gaps.map(gapText).join(', ') + '. Risk and performance skip them.</div>';
+      var ms = Object.keys(P.months).sort().reverse(), rev = ms.filter(function (m) { return P.months[m].others.length; });
+      h += '<h3>Where each month comes from</h3><p class="sub small">Total value of the holdings in the file used, and how the other files that cover the same month differ from it. ' + rev.length + ' of ' + ms.length + ' months appear in more than one file.</p><div class="scroll" style="max-height:420px"><table><tr><th>Month</th><th>Used</th><th class="r">Total</th><th>Other files for this month (difference from the one used)</th></tr>' +
+        ms.map(function (m) {
+          var x = P.months[m];
+          return '<tr><td>' + ym(m) + '</td><td>' + (x.kind === 'actual' ? '<span class="chip">actuals</span> ' : '<span class="chip w">estimate</span> ') + esc(x.file) + (x.errors ? ' <span class="chip b">' + x.errors + ' errors</span>' : '') + (x.hasReturn ? '' : ' <span class="chip">value only</span>') + '</td><td class="r num">' + money(x.total) + '</td><td class="small">' +
+            x.others.map(function (o) { return esc(o.file) + ' <span class="num ' + (Math.abs(o.diff) >= 0.005 ? 'neg' : 'mut') + '">' + spct(o.diff, 2) + '</span>' + (o.errors ? ' <span class="chip b">' + o.errors + ' errors</span>' : ''); }).join(' · ') + '</td></tr>';
+        }).join('') + '</table></div></section>';
     }
     if (!S.R) return h;
     var R = S.R, M = S.meta, st = S.settings;
@@ -561,6 +607,12 @@
       S.attr.policy = pol; engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(pol)]).then(function (x) { S.attrRes = x; render(); });
     });
     ['at-from', 'at-to'].forEach(function (id) { var e = $('#' + id); if (e) e.addEventListener('change', function () { engine.call('attribution', [$('#at-from').value, $('#at-to').value, JSON.stringify(S.attrRes.policy)]).then(function (x) { S.attrRes = x; render(); }); }); });
+    $$('select[data-srckind]').forEach(function (c) { c.addEventListener('change', function () {
+      var n = c.getAttribute('data-srckind'); S.settings.src_kind[n] = c.value; saveSettings();
+      S.src.files.forEach(function (f) { if (f.name === n) f.kind = c.value; });
+      S.issues = S.issues.filter(function (i) { return !/holdings show an Excel error in|values but no monthly returns/.test(i.text); });
+      combineAndLoad();
+    }); });
     var lm = $('#liq-month'); if (lm) lm.addEventListener('change', function () { S.liq.month = +lm.value; render(); });
     var lh = $('#liq-h'); if (lh) lh.addEventListener('change', function () { S.settings.liqr.horizon = +lh.value; saveSettings(); runLiquidity(); });
     var lmin = $('#liq-min'); if (lmin) lmin.addEventListener('change', function () { var v = +lmin.value; if (isFinite(v) && v >= 0 && v <= 100) { S.settings.liqr.min_liquid = v / 100; saveSettings(); runLiquidity(); } });

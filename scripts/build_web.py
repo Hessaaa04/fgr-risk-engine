@@ -70,7 +70,7 @@ def build(out: Path, csp: bool, artifact: bool = False) -> None:
     (out / "vendor").mkdir(parents=True)
     (out / "pyodide").mkdir()
     web = ROOT / "web"
-    for f in ("app.js", "app.css", "worker.js"):
+    for f in ("app.js", "app.css", "worker.js", "sources.js"):
         shutil.copy(web / f, out / f)
     html = (web / "index.html").read_text()
     html = html.replace("<!--CSP-->", f'<meta http-equiv="Content-Security-Policy" content="{CSP}">' if csp else "")
